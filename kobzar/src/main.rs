@@ -79,6 +79,12 @@ use tracing::info;
 
 pub mod cfg;
 
+/// The query engine is responsible for executing queries on the data, defining indexes,
+/// calculating layouts, and optimizing storage.
+pub mod q_engine;
+
+type HashMap<K, V> = hashbrown::HashMap<K, V, ahash::RandomState>;
+
 pub fn main() {
     let config = cfg::init();
     cfg::init_log(&config);
