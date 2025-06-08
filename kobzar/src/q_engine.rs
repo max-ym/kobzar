@@ -74,8 +74,35 @@ pub enum TypeKind {
     /// directly stored in the database, but can be used as a field type in other structures.
     Struct(Struct),
 
+    /// A tuple type, which is a fixed-size collection of types.
+    ///
+    /// The size of the inline array is choosen so to not affect total enum's size.
+    Tuple(SmallVec<[TypeId; 42]>),
+
+    /// A generic type, which can be used to define types like `Vec<T>`, where `T` is a type parameter.
+    /// The first type in the generic is the base type, and the rest are type parameters.
+    GenericInstance(GenericInstance),
+}
+
+#[derive(Debug)]
+pub struct Struct {
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
+
+    /// Comment for the struct, which can be used to describe the struct's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
+    
+    /// Structure specialization, which defines the specific kind of the structure.
+    spec: StructSpec,
+}
+
+#[derive(Debug)]
+pub enum StructSpec {
     /// Table is a special case of a struct that is used to store records in the database.
-    SchemafullTable(Struct),
+    SchemafullTable(SchemafullTable),
 
     /// An ADT (Algebraic Data Type) table, which is a table that can have multiple variants,
     /// each with its own structure. This is used to represent complex data structures
@@ -90,37 +117,19 @@ pub enum TypeKind {
     /// Mixed schemafull schemaless table,
     /// which is a table that can have both schemafull and schemaless fields.
     SchemafullSchemalessTable(SchemafullSchemalessTable),
-
+    
     /// Mixed schemafull adt schemaless table,
     /// which is a table that can have both schemafull ADT and schemaless fields.
     /// This is used to represent complex data structures that can have different shapes,
     /// like a union type, with a fixed schema for the ADT part, but also with
     /// schemaless fields that can have any type.
     SchemafullAdtSchemalessTable(SchemafullAdtSchemalessTable),
-
-    /// A tuple type, which is a fixed-size collection of types.
-    ///
-    /// The size of the inline array is choosen so to not affect total enum's size.
-    Tuple(SmallVec<[TypeId; 41]>),
-
-    /// A generic type, which can be used to define types like `Vec<T>`, where `T` is a type parameter.
-    /// The first type in the generic is the base type, and the rest are type parameters.
-    GenericInstance(GenericInstance),
 }
 
 #[derive(Debug)]
-pub struct Struct {
-    /// The fields of the struct.
+pub struct SchemafullTable {
+    /// Fields of the schemafull table.
     fields: Vec<Field>,
-
-    /// Triggers, which can be used to define custom behavior
-    /// for operations on the record, such as insert, update, delete, etc.
-    triggers: StructTriggers,
-
-    /// Comment for the struct, which can be used to describe the struct's purpose,
-    /// usage, or any other relevant information.
-    /// Can be empty if no comment is provided.
-    comment: String,
 }
 
 #[derive(Debug)]
@@ -128,24 +137,10 @@ pub struct AdtTable {
     /// Variants of the ADT table, each variant can have its own structure.
     /// The map is keyed by the variant name, and the value is the structure of the variant.
     variants: HashMap<String, Vec<Field>>,
-
-    /// Triggers, which can be used to define custom behavior
-    /// for operations on the record, such as insert, update, delete, etc.
-    triggers: StructTriggers,
 }
 
 #[derive(Debug)]
 pub struct SchemalessTable {
-    /// Comment for the schemaless table,
-    /// which can be used to describe the table's purpose,
-    /// usage, or any other relevant information.
-    /// Can be empty if no comment is provided.
-    comment: String,
-
-    /// Triggers, which can be used to define custom behavior
-    /// for operations on the record, such as insert, update, delete, etc.
-    triggers: StructTriggers,
-
     /// The bound fields of the schemaless table.
     /// The map is keyed by the field name,
     /// and the value is the configuration of the field.
@@ -164,16 +159,6 @@ pub struct SchemalessTable {
 
 #[derive(Debug)]
 pub struct SchemafullSchemalessTable {
-    /// Comment for the schemafull schemaless table,
-    /// which can be used to describe the table's purpose,
-    /// usage, or any other relevant information.
-    /// Can be empty if no comment is provided.
-    comment: String,
-
-    /// Triggers, which can be used to define custom behavior
-    /// for operations on the record, such as insert, update, delete, etc.
-    triggers: StructTriggers,
-
     /// The bound and fixed fields of the schemafull schemaless table.
     fields: Vec<FieldCfg>,
 
@@ -189,16 +174,6 @@ pub struct SchemafullSchemalessTable {
 
 #[derive(Debug)]
 pub struct SchemafullAdtSchemalessTable {
-    /// Comment for the schemafull ADT schemaless table,
-    /// which can be used to describe the table's purpose,
-    /// usage, or any other relevant information.
-    /// Can be empty if no comment is provided.
-    comment: String,
-
-    /// Triggers, which can be used to define custom behavior
-    /// for operations on the record, such as insert, update, delete, etc.
-    triggers: StructTriggers,
-
     /// Variants of the ADT table, which can have multiple variants,
     /// each with its own structure.
     variants: HashMap<String, Vec<Field>>,
@@ -280,7 +255,7 @@ pub struct GenericInstance {
     generic_type: TypeId,
 
     /// The type parameters of the generic type.
-    type_params: SmallVec<[TypeId; 40]>,
+    type_params: SmallVec<[TypeId; 41]>,
 }
 
 #[derive(Debug)]
