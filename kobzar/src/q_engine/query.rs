@@ -86,6 +86,12 @@ pub enum Query {
     /// Drop a trigger from a table.
     DropTableTrigger(DropTableTriggerQuery),
 
+    /// Create a trigger for a field in a table.
+    CreateFieldTrigger(CreateFieldTriggerQuery),
+
+    /// Drop a trigger for a field in a table.
+    DropFieldTrigger(DropFieldTriggerQuery),
+
     /// Create a new field in a table. This can only be done for schemafull tables, either
     /// ADT, normal, or mixed schemafull-schemaless tables.
     CreateField(CreateFieldQuery),
@@ -507,6 +513,44 @@ pub enum TriggerExecKind {
 pub struct DropTableTriggerQuery {
     /// The type of the table to drop the trigger from.
     pub table: TypeId,
+
+    /// The kind of the trigger to drop.
+    pub kind: TriggerExecKind,
+}
+
+#[derive(Debug)]
+pub struct CreateFieldTriggerQuery {
+    /// The type of the table to create the trigger for.
+    pub table: TypeId,
+
+    /// The index of the variant to create the trigger for, if table is an ADT.
+    /// This should be [None] for normal schemafull tables.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to create the trigger for.
+    pub field_idx: FieldIdx,
+
+    /// The kind of the trigger to create.
+    pub kind: TriggerExecKind,
+
+    /// The code to execute when the trigger is fired.
+    /// The output type should be a [Result], indicating whether the trigger execution was successful or not.
+    /// Triggers should return [Ok] with the modified record,
+    /// or [Err] with an error message if the execution fails.
+    pub code: FieldTransformCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropFieldTriggerQuery {
+    /// The type of the table to drop the trigger from.
+    pub table: TypeId,
+
+    /// The index of the variant to drop the trigger from, if table is an ADT.
+    /// This should be [None] for normal schemafull tables.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to drop the trigger from.
+    pub field_idx: FieldIdx,
 
     /// The kind of the trigger to drop.
     pub kind: TriggerExecKind,
