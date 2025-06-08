@@ -6,7 +6,7 @@ authors = ["Maxym Naumchyk <max.naumch@gmail.com>"]
 
 [dependencies]
 tokio = { version = "1.45", features = ["full"] }
-smallvec = { version = "1.15", features = ["union"] }
+smallvec = { version = "1.15", features = ["union", "const_generics"] }
 tracing = { version = "0.1", features = ["log"] }
 compact_str = "0.9"
 thiserror = "2.0"

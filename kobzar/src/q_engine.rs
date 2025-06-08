@@ -27,13 +27,42 @@ pub struct Schema {
 
     /// All derived and user-defined types in the schema.
     /// Note that built-in types are not included here, as they are managed separately.
-    types: HashMap<TypeId, TypeCfg>,
+    types: HashMap<TypeId, TypeKind>,
 }
 
+/// Triggers for structures, which can be used to define custom behavior
+/// for operations on the structure, such as insert, update, delete, etc.
+/// These triggers can be used to perform custom actions, such as validation,
+/// transformation, or logging, when the structure is modified.
 #[derive(Debug)]
-pub struct TypeCfg {
-    /// The kind of the type, which can be a struct, tuple, or generic.
-    kind: TypeKind,
+pub struct StructTriggers {
+    /// Trigger for the structure before insert.
+    /// This trigger is called before the structure is inserted into the database.
+    /// It can be used to perform custom validation or transformation of the structure
+    /// before it is inserted.
+    before_insert: Option<ffi::SelfStructCall>,
+
+    /// Trigger for the structure after insert.
+    /// This trigger is called after the structure is inserted into the database.
+    /// It can be used to perform custom actions after the structure is inserted,
+    /// such as logging or sending notifications.
+    after_insert: Option<ffi::SelfStructCall>,
+
+    /// Trigger for the structure before update.
+    /// This trigger is called before the structure is updated in the database.
+    before_update: Option<ffi::SelfStructCall>,
+
+    /// Trigger for the structure after update.
+    /// This trigger is called after the structure is updated in the database.
+    after_update: Option<ffi::SelfStructCall>,
+
+    /// Trigger for the structure before delete.
+    /// This trigger is called before the structure is deleted from the database.
+    before_delete: Option<ffi::SelfStructCall>,
+
+    /// Trigger for the structure after delete.
+    /// This trigger is called after the structure is deleted from the database.
+    after_delete: Option<ffi::SelfStructCall>,
 }
 
 /// Kind of type in the database schema. Note that here we define only user-defined types and
@@ -58,10 +87,21 @@ pub enum TypeKind {
     /// and the fields have no fixed type.
     SchemalessTable(SchemalessTable),
 
+    /// Mixed schemafull schemaless table,
+    /// which is a table that can have both schemafull and schemaless fields.
     SchemafullSchemalessTable(SchemafullSchemalessTable),
 
+    /// Mixed schemafull adt schemaless table,
+    /// which is a table that can have both schemafull ADT and schemaless fields.
+    /// This is used to represent complex data structures that can have different shapes,
+    /// like a union type, with a fixed schema for the ADT part, but also with
+    /// schemaless fields that can have any type.
+    SchemafullAdtSchemalessTable(SchemafullAdtSchemalessTable),
+
     /// A tuple type, which is a fixed-size collection of types.
-    Tuple(Vec<TypeId>),
+    ///
+    /// The size of the inline array is choosen so to not affect total enum's size.
+    Tuple(SmallVec<[TypeId; 41]>),
 
     /// A generic type, which can be used to define types like `Vec<T>`, where `T` is a type parameter.
     /// The first type in the generic is the base type, and the rest are type parameters.
@@ -72,24 +112,40 @@ pub enum TypeKind {
 pub struct Struct {
     /// The fields of the struct.
     fields: Vec<Field>,
+
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
+
+    /// Comment for the struct, which can be used to describe the struct's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
 }
 
 #[derive(Debug)]
 pub struct AdtTable {
-    variants: Vec<AdtTableVariant>,
-}
+    /// Variants of the ADT table, each variant can have its own structure.
+    /// The map is keyed by the variant name, and the value is the structure of the variant.
+    variants: HashMap<String, Vec<Field>>,
 
-#[derive(Debug)]
-pub struct AdtTableVariant {
-    /// The name of the variant.
-    name: String,
-
-    /// The fields of the variant.
-    fields: Vec<Field>,
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
 }
 
 #[derive(Debug)]
 pub struct SchemalessTable {
+    /// Comment for the schemaless table,
+    /// which can be used to describe the table's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
+
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
+
     /// The bound fields of the schemaless table.
     /// The map is keyed by the field name,
     /// and the value is the configuration of the field.
@@ -100,14 +156,70 @@ pub struct SchemalessTable {
     /// bound to the schema, and which types were bound. This check is used when defining new
     /// bounds, especially when the bound is to "any" type, in which case only one binding
     /// for the same field name is allowed.
-    map: HashMap<String, SmallVec<[TypeId; 1]>>,
+    bound_to_types: HashMap<String, SmallVec<[TypeId; 1]>>,
 
     /// Map of field names to their type IDs, mapped to indexes in the `fields` vector.
-    typed_map: HashMap<(String, Option<TypeId>), usize>,
+    field_to_idx: HashMap<(String, Option<TypeId>), usize>,
+}
+
+#[derive(Debug)]
+pub struct SchemafullSchemalessTable {
+    /// Comment for the schemafull schemaless table,
+    /// which can be used to describe the table's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
+
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
+
+    /// The bound and fixed fields of the schemafull schemaless table.
+    fields: Vec<FieldCfg>,
+
+    /// Map of fixed field names to their indexes in the `fields` vector.
+    fixed: HashMap<String, (TypeId, usize)>,
+
+    /// Map of bound field names to their type IDs bound to schema.
+    bound_to_types: HashMap<String, SmallVec<[TypeId; 1]>>,
+
+    /// Map of bound field names and their type IDs, mapped to indexes in the `fields` vector.
+    bound_to_idx: HashMap<(String, Option<TypeId>), usize>,
+}
+
+#[derive(Debug)]
+pub struct SchemafullAdtSchemalessTable {
+    /// Comment for the schemafull ADT schemaless table,
+    /// which can be used to describe the table's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
+
+    /// Triggers, which can be used to define custom behavior
+    /// for operations on the record, such as insert, update, delete, etc.
+    triggers: StructTriggers,
+
+    /// Variants of the ADT table, which can have multiple variants,
+    /// each with its own structure.
+    variants: HashMap<String, Vec<Field>>,
+
+    /// The bound and fixed fields of the schemaless part.
+    bound_fields: Vec<FieldCfg>,
+
+    /// Map of fixed field names to their indexes in the `bound_fields` vector.
+    fixed: HashMap<String, (TypeId, usize)>,
+
+    /// Map of bound field names to their type IDs bound to schema.
+    bound_to_types: HashMap<String, SmallVec<[TypeId; 1]>>,
 }
 
 #[derive(Debug)]
 pub struct FieldCfg {
+    /// Comment for the field, which can be used to describe the field's purpose,
+    /// usage, or any other relevant information.
+    /// Can be empty if no comment is provided.
+    comment: String,
+
     /// Optional validation code for the field.
     validation: Option<ffi::FieldValidationCode>,
 
@@ -159,18 +271,16 @@ pub struct FieldCfg {
 }
 
 /// Generic type configuration, which can be used for types like `Vec<T>`.
+///
+/// The size of the inner inline array is chosen so to not affect total [TypeKind] enum's size.
 #[derive(Debug)]
-pub struct GenericInstance(Vec<TypeId>);
+pub struct GenericInstance {
+    /// The generic type ID, which is the base type of the generic.
+    /// For example, for `Vec<T>`, this would be the type ID of `Vec`.
+    generic_type: TypeId,
 
-impl GenericInstance {
-    /// Get the generic type ID, for which concrete types was derived.
-    /// For example, for `Vec<T>`, the generic type is `Vec`.
-    pub fn generic(&self) -> TypeId {
-        // The first type in the generic is the base type.
-        self.0.first().copied().expect(
-            "generic type config must have an array with the first entry holding the generic type ID",
-        )
-    }
+    /// The type parameters of the generic type.
+    type_params: SmallVec<[TypeId; 40]>,
 }
 
 #[derive(Debug)]
@@ -180,4 +290,8 @@ pub struct Field {
 
     /// The type of the field.
     ty: TypeId,
+
+    /// Configuration for the field, which includes validation and transformation code,
+    /// default value, and other field-specific settings.
+    cfg: FieldCfg,
 }
