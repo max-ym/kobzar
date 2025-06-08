@@ -36,6 +36,9 @@ pub enum Query {
     BindSchemalessField(BindSchemalessFieldQuery),
     UnbindSchemalessField(UnbindSchemalessFieldQuery),
 
+    CreateTableTrigger(CreateTableTriggerQuery),
+    DropTableTrigger(DropTableTriggerQuery),
+
     CreateField(CreateFieldQuery),
     SetFieldDefault(SetFieldDefaultQuery),
     SetFieldComputed(SetFieldComputedQuery),
@@ -321,7 +324,7 @@ pub struct BindSchemalessFieldQuery {
     /// Field name and field type form a unique identifier for the field,
     /// so when the value under the same name but different type is inserted,
     /// it will be considered a different field.
-    /// 
+    ///
     /// If this is [None], the field will be bound as a schemaless field,
     /// which means that it can hold any value. This will still allow to use the field
     /// in query conditions, operations and indexes, and will match any value type.
@@ -343,6 +346,51 @@ pub struct UnbindSchemalessFieldQuery {
 
     /// The type of the field to unbind. This should match the type passed during the binding.
     pub field_type: Option<TypeId>,
+}
+
+#[derive(Debug)]
+pub struct CreateTableTriggerQuery {
+    /// The type of the table to create the trigger for.
+    pub table: TypeId,
+
+    /// The kind of the trigger to create.
+    pub kind: TriggerExecKind,
+
+    /// The code to execute when the trigger is fired.
+    /// The output type should be a [Result], indicating whether the trigger execution was successful or not.
+    /// Triggers should return [Ok] with the modified record,
+    /// or [Err] with an error message if the execution fails.
+    pub code: SelfStructCall,
+}
+
+#[derive(Debug, Clone)]
+pub enum TriggerExecKind {
+    /// Trigger that is executed before the record is inserted into the table.
+    BeforeInsert,
+
+    /// Trigger that is executed before the record is updated in the table.
+    BeforeUpdate,
+
+    /// Trigger that is executed before the record is deleted from the table.
+    BeforeDelete,
+
+    /// Trigger that is executed after the record is inserted into the table.
+    AfterInsert,
+
+    /// Trigger that is executed after the record is updated in the table.
+    AfterUpdate,
+
+    /// Trigger that is executed after the record is deleted from the table.
+    AfterDelete,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropTableTriggerQuery {
+    /// The type of the table to drop the trigger from.
+    pub table: TypeId,
+
+    /// The kind of the trigger to drop.
+    pub kind: TriggerExecKind,
 }
 
 #[derive(Debug, Clone)]
