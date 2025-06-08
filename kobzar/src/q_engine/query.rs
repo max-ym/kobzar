@@ -51,6 +51,11 @@ pub enum Query {
     CommentIndex(CommentIndexQuery),
     RenameIndex(RenameIndexQuery),
     DropIndex(DropIndexQuery),
+
+    CreateFn(CreateFnQuery),
+    CommentFn(CommentFnQuery),
+    RenameFn(RenameFnQuery),
+    DropFn(DropFnQuery),
 }
 
 #[derive(Debug)]
@@ -164,12 +169,30 @@ pub struct CreateTableQuery {
     /// This determines how the table will be structured and what kind of records it can hold.
     pub table_kind: TableKind,
 
-    /// Whether this table can independently store records in the database.
-    /// If `false`, the table is not storable, and can only be used in the fields
-    /// in other records. Those tables that cannot be stored independently are called
-    /// structs instead of tables. But in the query engine, the logic mainly is the same,
-    /// so we use the same query structure for both.
-    pub is_directly_storable: bool,
+    /// The behavior of the table in terms of storage.
+    pub store_behavior: TableStoreBehavior,
+}
+
+#[derive(Debug, Clone)]
+pub enum TableStoreBehavior {
+    /// This table can independently store records in the database.
+    DirectlyStorable,
+
+    /// The table cannot be stored directly in the database, and can only be used
+    /// as a field in other records. This is useful for defining structures that
+    /// are not meant to be stored independently.
+    FieldOnly,
+
+    /// Only one record of this type can be stored in the database.
+    /// This is useful for defining singleton records that, for example,
+    /// store a configuration or some global state. Such table cannot be used as
+    /// a field in other records, as it is not meant to be stored
+    /// as a part of other records, but rather as a standalone single record.
+    /// Note that there will always be exactly one record of this type in the database,
+    /// both zero or many number of records are not allowed. However, this
+    /// record may have no fields, and then it can be used as a marker of sorts or as a
+    /// "module" to store functions (as its methods) in some named context.
+    Singleton,
 }
 
 #[derive(Debug, Clone)]
@@ -583,4 +606,55 @@ pub enum IndexCfg {
         /// The fields to index.
         fields: Vec<FieldIdx>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFnQuery {
+    /// The name of the function to create.
+    pub name: String,
+
+    /// The type of the self argument, if the function is a method.
+    /// Boolean indicates whether the self argument is a reference (true) or a value (false).
+    pub self_arg: Option<(bool, TypeId)>,
+
+    /// Arguments of the function, which are the types of the arguments that the function takes.
+    /// This does not include the self argument, if it is present.
+    pub args: Vec<TypeId>,
+
+    /// The return type of the function.
+    pub ret: TypeId,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentFnQuery {
+    /// The name of the function to comment.
+    pub name: String,
+
+    /// If this is a method, the type of self argument should be passed to locate the method.
+    pub self_arg: Option<TypeId>,
+
+    /// The comment to add to the function.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameFnQuery {
+    /// The name of the function to rename.
+    pub name: String,
+
+    /// If this is a method, the type of self argument should be passed to locate the method.
+    pub self_arg: Option<TypeId>,
+
+    /// The new name of the function.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropFnQuery {
+    /// The name of the function to drop.
+    pub name: String,
+
+    /// If this is a method, the type of self argument should be passed to locate the method.
+    pub self_arg: Option<TypeId>,
 }
