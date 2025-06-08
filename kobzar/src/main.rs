@@ -72,6 +72,7 @@
 //! - **JIT compilation**: Kobzar uses JIT compilation to compile received bytecode
 //!   into machine code, which allows for fast execution of queries.
 
+#![allow(dead_code)] // while we are still developing the code, we will have some dead code
 
 use std::sync::OnceLock;
 
