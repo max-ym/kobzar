@@ -1,4 +1,5 @@
 use super::*;
+use smallvec::SmallVec;
 
 /// Data types and structures storeable and queryable in Kobzar.
 mod dt;
@@ -7,7 +8,6 @@ pub use dt::*;
 /// Query structure.
 mod query;
 pub(crate) use query::*;
-use smallvec::SmallVec;
 
 /// Executable foreign functions, that can be defined by the user for custom operations,
 /// field validations, transformations, etc.
