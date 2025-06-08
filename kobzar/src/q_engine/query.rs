@@ -1,4 +1,4 @@
-use crate::q_engine::ffi::{FieldValidationCall, SelfStructCall};
+use crate::q_engine::ffi::{FieldTransformCall, FieldValidationCall, SelfStructCall};
 
 use super::*;
 
@@ -17,44 +17,140 @@ pub enum Query {
     /// such as when we need to fail on duplicate key for insert,
     /// or when we need to update only if the record exists.
     Upsert(UpsertQuery),
+
+    /// Delete query can be used to delete records from the database.
+    /// It can also be used to delete records based on some conditions,
+    /// or to delete all records of a certain type.
     Delete(DeleteQuery),
+
+    /// Select query can be used to select records from the database.
+    /// It can also be used to select records based on some conditions,
+    /// or to select only certain fields of the record.
     Select(SelectQuery),
 
+    /// Create table query can be used to create a new table in the database.
+    /// This table can be schemafull, schemaless, or a mix of both.
+    /// It can also be an ADT (Algebraic Data Type) table, which allows to have different types of records
+    /// in the same table with their own specific fields.
+    /// The table can also be a singleton, which means that only one record of
+    /// this type can be stored in the database.
     CreateTable(CreateTableQuery),
+
+    /// Comment table query can be used to add a comment to a table,
     CommentTable(CommentTableQuery),
+
+    /// Rename table query can be used to rename a table.
     RenameTable(RenameTableQuery),
+
+    /// Create table validation query can be used to create a validation for the table.
+    /// This validation is run on every insert or update operation on the table,
+    /// and can be used to ensure that the table record is in a valid state.
+    /// This operates on all fields of the table once they are set, unlike field validations
+    /// which operate on individual fields.
     CreateTableValidation(CreateTableValidationQuery),
+
+    /// Comment table validation query can be used to add a comment to a table validation.
     CommentTableValidation(CommentTableValidationQuery),
+
+    /// Drop table validation query can be used to drop a validation from the table.
     DropTableValidation(DropTableValidationQuery),
+
+    /// Drop table query can be used to drop a table from the database.
     DropTable(DropTableQuery),
 
+    /// Create ADT variant query can be used to create a new variant in an ADT table.
     CreateAdtVariant(CreateAdtVariantQuery),
+
+    /// Comment ADT variant query can be used to add a comment to an ADT variant.
     CommentAdtVariant(CommentAdtVariantQuery),
+
+    /// Rename ADT variant query can be used to rename an ADT variant.
     RenameAdtVariant(RenameAdtVariantQuery),
+
+    /// Drop ADT variant query can be used to drop a variant from an ADT table.
     DropAdtVariant(DropAdtVariantQuery),
 
+    /// Bind a schemaless field to a table.
+    /// This will allocate a unique field index for the field,
+    /// and will allow to use this field in query conditions, operations and indexes.
     BindSchemalessField(BindSchemalessFieldQuery),
+
+    /// Unbind a schemaless field from a table.
     UnbindSchemalessField(UnbindSchemalessFieldQuery),
 
+    /// Create a trigger for a table.
+    /// This trigger can be used to execute some code when a record is inserted, updated or deleted.
+    /// Only one trigger of each kind can be created for a table,
     CreateTableTrigger(CreateTableTriggerQuery),
+
+    /// Drop a trigger from a table.
     DropTableTrigger(DropTableTriggerQuery),
 
+    /// Create a new field in a table. This can only be done for schemafull tables, either
+    /// ADT, normal, or mixed schemafull-schemaless tables.
     CreateField(CreateFieldQuery),
+
+    /// Set a default value for a field in a table. This value is set each time
+    /// a new record is created, when user does not explicitly set the field value.
     SetFieldDefault(SetFieldDefaultQuery),
+
+    /// Set a computed value for a field in a table. This value is calculated
+    /// each time the record is inserted or updated, and can be used to derive
+    /// the value from other fields or from some code execution. User cannot set this value
+    /// directly, but can set the fields that are used to calculate it.
     SetFieldComputed(SetFieldComputedQuery),
+
+    /// Set a check function for a field in a table. This function is executed
+    /// each time the record is inserted or updated, and can be used to ensure that the field
+    /// value is valid. Field checks are run after the field default and computed values are set,
+    /// and after transformations are applied.
     SetFieldCheck(SetFieldCheckQuery),
+
+    /// Set a transformation function for a field in a table. This function is executed
+    /// each time the record is inserted or updated, and can be used to transform the field value
+    /// before it is stored in the database. This can be used to normalize the value, or to
+    /// apply some custom logic to the value before it is stored. The same can be achieved
+    /// by setting a trigger on the table, but this is more convenient
+    /// and allows to set the transformation function directly on the field.
+    /// This can have an added benefit of being able to run the transformation
+    /// function asynchronously on multiple fields in parallel,
+    /// while triggers are run sequentially.
+    SetFieldTransform(SetFieldTransformQuery),
+
+    /// Comment a field in a table. This can be used to add or remove a comment
+    /// to a field in a table.
     CommentField(CommentFieldQuery),
+
+    /// Rename a field in a table.
     RenameField(RenameFieldQuery),
+
+    /// Drop a field from a table.
     DropField(DropFieldQuery),
 
+    /// Create an index on a table. This can be used to speed up queries
+    /// that filter or sort records based on the indexed fields. This also allows
+    /// to create unique indexes, which ensure that the indexed fields are unique across all records.
     CreateIndex(CreateIndexQuery),
+
+    /// Comment an index on a table.
     CommentIndex(CommentIndexQuery),
+    
+    /// Rename an index on a table.
     RenameIndex(RenameIndexQuery),
+
+    /// Drop an index from a table.
     DropIndex(DropIndexQuery),
 
+    /// Create a function or a method in the database.
     CreateFn(CreateFnQuery),
+
+    /// Comment a function or a method in the database.
     CommentFn(CommentFnQuery),
+
+    /// Rename a function or a method in the database.
     RenameFn(RenameFnQuery),
+
+    /// Drop a function or a method from the database.
     DropFn(DropFnQuery),
 }
 
@@ -478,6 +574,22 @@ pub struct SetFieldCheckQuery {
     /// The code to execute to check the value of the field.
     /// The output type should be a boolean, indicating whether the value is valid or not.
     pub code: FieldValidationCall,
+}
+
+#[derive(Debug)]
+pub struct SetFieldTransformQuery {
+    /// The type of the table to set the field transformation.
+    pub table: TypeId,
+
+    /// The index of the variant to set the transformation for, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to set the transformation for.
+    pub field_idx: FieldIdx,
+
+    /// The code to execute to transform the value of the field.
+    /// The output type should match the type of the field.
+    pub code: FieldTransformCall,
 }
 
 #[derive(Debug, Clone)]

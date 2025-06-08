@@ -47,6 +47,12 @@ impl FieldValidationCall {
     }
 }
 
+#[derive(Debug)]
+pub struct FieldTransformCall {
+    /// The code for the function that transforms the field value.
+    pub lib: libloading::Library,
+}
+
 #[derive(Debug, Error)]
 pub enum CompilationError {
     // TODO
