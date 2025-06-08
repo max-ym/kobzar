@@ -1,3 +1,5 @@
+use crate::q_engine::ffi::{FieldValidationCall, SelfStructCall};
+
 use super::*;
 
 type FieldIdx = u64;
@@ -7,7 +9,7 @@ type FieldIdx = u64;
 /// which can include queries, among other computational tasks.
 /// When compiling byte code, normal computations are directly translated to machine code,
 /// while queries are called through ABI, which in turn creates these query structures.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Query {
     /// Upsert query can be used to insert or update a record in the database.
     /// We also store normal insert and update queries as upsert queries,
@@ -17,9 +19,38 @@ pub enum Query {
     Upsert(UpsertQuery),
     Delete(DeleteQuery),
     Select(SelectQuery),
+
+    CreateTable(CreateTableQuery),
+    CommentTable(CommentTableQuery),
+    RenameTable(RenameTableQuery),
+    CreateTableValidation(CreateTableValidationQuery),
+    CommentTableValidation(CommentTableValidationQuery),
+    DropTableValidation(DropTableValidationQuery),
+    DropTable(DropTableQuery),
+
+    CreateAdtVariant(CreateAdtVariantQuery),
+    CommentAdtVariant(CommentAdtVariantQuery),
+    RenameAdtVariant(RenameAdtVariantQuery),
+    DropAdtVariant(DropAdtVariantQuery),
+
+    BindSchemalessField(BindSchemalessFieldQuery),
+    UnbindSchemalessField(UnbindSchemalessFieldQuery),
+
+    CreateField(CreateFieldQuery),
+    SetFieldDefault(SetFieldDefaultQuery),
+    SetFieldComputed(SetFieldComputedQuery),
+    SetFieldCheck(SetFieldCheckQuery),
+    CommentField(CommentFieldQuery),
+    RenameField(RenameFieldQuery),
+    DropField(DropFieldQuery),
+
+    CreateIndex(CreateIndexQuery),
+    CommentIndex(CommentIndexQuery),
+    RenameIndex(RenameIndexQuery),
+    DropIndex(DropIndexQuery),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct UpsertQuery {
     /// The type of the record to upsert.
     pub table: TypeId,
@@ -47,7 +78,7 @@ pub enum UpsertKind {
     InsertOrFail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FieldOp {
     /// Index of the field in the record.
     pub idx: FieldIdx,
@@ -56,7 +87,7 @@ pub struct FieldOp {
     pub op: FieldOpType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum FieldOpType {
     /// Set the field to a constant value. This value may be explicitly provided by the user,
     /// or it may be the result of the code execution, which leads to this result stored here.
@@ -69,7 +100,7 @@ pub enum FieldOpType {
 #[derive(Debug, Clone)]
 pub struct DataValue(Vec<u8>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DeleteQuery {
     /// The type of the record to delete.
     pub table: TypeId,
@@ -82,24 +113,32 @@ pub struct DeleteQuery {
     pub returning: Option<TypeId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Condition {
     /// A condition that matches records based on a range of field values.
-    /// If [min](Condition::Range::min) is [None], it means no lower bound, 
+    /// If [min](Condition::Range::min) is [None], it means no lower bound,
     /// and if [max](Condition::Range::max) is [None], it means no upper bound.
     /// Effectively, if min and max are set to the same [Some] value, it matches only that value,
     /// and acts as an equality condition. When min is set to [None] and max is set to [Some],
     /// it matches all values less than or equal to the max value.
     /// If min is set to [Some] and max is set to [None], it matches all values greater than or equal to the min value.
     /// The boolean values indicate whether the min and max values are inclusive (true) or exclusive (false).
-    Range { field: FieldIdx, min: Option<(DataValue, bool)>, max: Option<(DataValue, bool)> },
+    Range {
+        field: FieldIdx,
+        min: Option<(DataValue, bool)>,
+        max: Option<(DataValue, bool)>,
+    },
 
     /// Match a field against values returned by a subquery. [is_not](Condition::InQuery::is_not)
     /// indicates whether to match records that are in the subquery result (false) or not in the subquery result (true).
-    InQuery { field: FieldIdx, query: Box<Query>, is_not: bool },
+    InQuery {
+        field: FieldIdx,
+        query: Box<Query>,
+        is_not: bool,
+    },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SelectQuery {
     /// The type of the record to select.
     pub table: TypeId,
@@ -111,4 +150,389 @@ pub struct SelectQuery {
     /// Conditions to match records to select.
     /// If no conditions are provided, all records of the type will be selected.
     pub conditions: Vec<Condition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateTableQuery {
+    /// The name of the table to create.
+    pub name: String,
+
+    /// The kind of the table to create.
+    /// This determines how the table will be structured and what kind of records it can hold.
+    pub table_kind: TableKind,
+
+    /// Whether this table can independently store records in the database.
+    /// If `false`, the table is not storable, and can only be used in the fields
+    /// in other records. Those tables that cannot be stored independently are called
+    /// structs instead of tables. But in the query engine, the logic mainly is the same,
+    /// so we use the same query structure for both.
+    pub is_directly_storable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum TableKind {
+    /// A normal schemafull table, which is a structure that can be used to store records.
+    Schemafull,
+
+    /// A schemafull ADT (Algebraic Data Type) table, which is a structure that can be used to
+    /// store records with a fixed schema variants - the ability to have different types of records
+    /// in the same table with their own specific fields.
+    SchemafullAdt,
+
+    /// A schemaless table, which is a structure that can be used to store records
+    /// without a predefined schema. This is useful for storing records with dynamic fields,
+    /// or for storing records that do not have a fixed schema.
+    Schemaless,
+
+    /// Mixed schemaless and schemafull behavior table.
+    /// This allows to enforce some fields to be schemafull,
+    /// while allowing other fields to be schemaless.
+    /// This will allow to make queries that create table fields like in normal schemafull tables,
+    /// and in the same time allow to bind schemaless fields to the table,
+    /// which can hold any value but which could be used in query conditions,
+    /// operations and indexes.
+    SchemafullSchemaless,
+
+    /// The same as [SchemafullSchemaless](TableKind::SchemafullSchemaless), but the schemafull
+    /// part is an ADT (Algebraic Data Type) table, which allows to have different types of records
+    /// in the same table with their own specific fields.
+    SchemafullAdtSchemaless,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentTableQuery {
+    /// The type of the table to comment.
+    pub table: TypeId,
+
+    /// The comment to add to the table.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameTableQuery {
+    /// The type of the table to rename.
+    pub table: TypeId,
+
+    /// The new name of the table.
+    pub new_name: String,
+}
+
+/// Create a validation for the table. This validation is being run on every insert or update
+/// operation on the table, and can be used to ensure that the table record is in a valid state.
+/// This operates on all fields of the table once they are set, unlike field validations
+/// which operate on individual fields.
+#[derive(Debug)]
+pub struct CreateTableValidationQuery {
+    /// The type of the table to create validation for.
+    pub table: TypeId,
+
+    /// The name of the validation to create.
+    /// This is used to identify the validation in the schema.
+    pub name: String,
+
+    /// The code to execute to validate the table.
+    /// The output type should be a [Result], indicating whether the table is valid or not.
+    pub code: SelfStructCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentTableValidationQuery {
+    /// The type of the table to comment the validation in.
+    pub table: TypeId,
+
+    /// The index of the validation to comment.
+    pub validation_idx: FieldIdx,
+
+    /// The comment to add to the validation.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropTableValidationQuery {
+    /// The type of the table to drop the validation from.
+    pub table: TypeId,
+
+    /// The index of the validation to drop.
+    pub validation_idx: FieldIdx,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropTableQuery {
+    /// The type of the table to drop.
+    pub table: TypeId,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAdtVariantQuery {
+    /// The type of the ADT table to create the variant for.
+    pub table: TypeId,
+
+    /// The name of the variant to create.
+    pub variant_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentAdtVariantQuery {
+    /// The type of the ADT table to comment the variant in.
+    pub table: TypeId,
+
+    /// The index of the variant to comment.
+    pub variant_idx: FieldIdx,
+
+    /// The comment to add to the variant.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameAdtVariantQuery {
+    /// The type of the ADT table to rename the variant in.
+    pub table: TypeId,
+
+    /// The index of the variant to rename.
+    pub variant_idx: FieldIdx,
+
+    /// The new name of the variant.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropAdtVariantQuery {
+    /// The type of the ADT table to drop the variant from.
+    pub table: TypeId,
+
+    /// The index of the variant to drop.
+    pub variant_idx: FieldIdx,
+}
+
+#[derive(Debug, Clone)]
+pub struct BindSchemalessFieldQuery {
+    /// The type of the table to bind the schemaless field in.
+    pub table: TypeId,
+
+    /// The name of the field to bind.
+    /// This will allocate unique field index for the field,
+    /// and will allow to use this field in query conditions, operations and indexes.
+    pub field_name: String,
+
+    /// The type of the field to bind.
+    /// Field name and field type form a unique identifier for the field,
+    /// so when the value under the same name but different type is inserted,
+    /// it will be considered a different field.
+    /// 
+    /// If this is [None], the field will be bound as a schemaless field,
+    /// which means that it can hold any value. This will still allow to use the field
+    /// in query conditions, operations and indexes, and will match any value type.
+    /// There should ever be either one such schemaless binding per field name, or
+    /// any number of bindings with different field types for the same name.
+    /// Violation of this rule will result in an transaction error.
+    pub field_type: Option<TypeId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnbindSchemalessFieldQuery {
+    /// The type of the table to unbind the schemaless field from.
+    pub table: TypeId,
+
+    /// The name of the field to unbind.
+    /// This will remove the field from the table, and will not allow to use it in query conditions,
+    /// operations and indexes.
+    pub field_name: String,
+
+    /// The type of the field to unbind. This should match the type passed during the binding.
+    pub field_type: Option<TypeId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFieldQuery {
+    /// The type of the table to add a field to.
+    pub table: TypeId,
+
+    /// The index of the variant to add the field to, if table is an ADT.
+    /// This should be [None] for normal schemafull tables.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The name of the field to add.
+    pub field_name: String,
+
+    /// The type of the field to add.
+    pub field_type: TypeId,
+}
+
+#[derive(Debug, Clone)]
+pub struct SetFieldDefaultQuery {
+    /// The type of the table to set the field default in.
+    pub table: TypeId,
+
+    /// The index of the variant to set the default for, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to set the default for.
+    pub field_idx: FieldIdx,
+
+    /// The default value to set for the field.
+    /// If `None`, the default value will be removed.
+    pub default: Option<DataValue>,
+}
+
+#[derive(Debug)]
+pub struct SetFieldComputedQuery {
+    /// The type of the table to set the field computed value in.
+    pub table: TypeId,
+
+    /// The index of the variant to set the computed value for, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to set the computed value for.
+    pub field_idx: FieldIdx,
+
+    /// The code to execute to compute the value of the field.
+    /// The output type should match the type of the field.
+    pub code: SelfStructCall,
+}
+
+#[derive(Debug)]
+pub struct SetFieldCheckQuery {
+    /// The type of the table to set the field check in.
+    pub table: TypeId,
+
+    /// The index of the variant to set the check for, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to set the check for.
+    pub field_idx: FieldIdx,
+
+    /// The code to execute to check the value of the field.
+    /// The output type should be a boolean, indicating whether the value is valid or not.
+    pub code: FieldValidationCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentFieldQuery {
+    /// The type of the table to comment the field in.
+    pub table: TypeId,
+
+    /// The index of the variant to comment the field in, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to comment.
+    pub field_idx: FieldIdx,
+
+    /// The comment to add to the field.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameFieldQuery {
+    /// The type of the table to rename the field in.
+    pub table: TypeId,
+
+    /// The index of the variant to rename the field in, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to rename.
+    pub field_idx: FieldIdx,
+
+    /// The new name of the field.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropFieldQuery {
+    /// The type of the table to drop the field from.
+    pub table: TypeId,
+
+    /// The index of the variant to drop the field from, if table is an ADT.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The index of the field to drop.
+    pub field_idx: FieldIdx,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateIndexQuery {
+    /// The type of the table to create the index on.
+    pub table: TypeId,
+
+    /// The index of the variant to create the index on, if table is an ADT.
+    /// This should be [None] for normal schemafull tables.
+    pub variant_idx: Option<FieldIdx>,
+
+    /// The name of the index to create.
+    pub index_name: String,
+
+    /// Configuration of the index to create.
+    pub cfg: IndexCfg,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentIndexQuery {
+    /// The type of the table to comment the index in.
+    pub table: TypeId,
+
+    /// The schema index of the table index to comment.
+    pub index_idx: FieldIdx,
+
+    /// The comment to add to the index.
+    /// If empty, the comment will be removed.
+    pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameIndexQuery {
+    /// The type of the table to rename the index in.
+    pub table: TypeId,
+
+    /// The schema index of the table index to rename.
+    pub index_idx: FieldIdx,
+
+    /// The new name of the index.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropIndexQuery {
+    /// The type of the table to drop the index from.
+    pub table: TypeId,
+
+    /// The schema index of the table index to drop.
+    pub index_idx: FieldIdx,
+}
+
+#[derive(Debug, Clone)]
+pub enum IndexCfg {
+    /// Unique index, which ensures that the indexed fields are unique across all records.
+    /// This is typically used for primary keys or unique constraints.
+    Unique {
+        /// The fields to index.
+        fields: Vec<FieldIdx>,
+
+        /// Whether optional values with [None] should be considered unique.
+        none_is_unique: bool,
+    },
+
+    /// Index that accounts for ordering of the indexed fields. This speeds up orders, range,
+    /// equality and other queries that can benefit from the index.
+    Order {
+        /// The fields to index.
+        fields: Vec<FieldIdx>,
+
+        /// Whether the index is ascending or descending.
+        /// If `true`, the index is ascending, otherwise it is descending.
+        is_ascending: bool,
+
+        /// Whether optional values with [None] should be at the top or the bottom of the index.
+        none_is_first: bool,
+    },
+
+    /// Index that is used for equality checks. This is typically used for fields that are
+    /// frequently used in equality conditions, such as foreign keys or other fields that
+    /// are often used to match records.
+    Equal {
+        /// The fields to index.
+        fields: Vec<FieldIdx>,
+    },
 }

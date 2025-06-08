@@ -1,6 +1,3 @@
 [workspace]
 resolver = "3"
-members = [
-    "kobzar",
-    "kobzar_bytecode",
-]
+members = ["kobzar"]

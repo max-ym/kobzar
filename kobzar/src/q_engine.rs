@@ -8,8 +8,10 @@ pub use dt::*;
 mod query;
 pub(crate) use query::*;
 
-/// Executable bytecode for the query engine.
-mod bytecode;
+/// Executable foreign functions, that can be defined by the user for custom operations,
+/// field validations, transformations, etc.
+/// These functions can be used in queries, and are compiled to machine code for fast execution.
+mod ffi;
 
 /// Schema information for some database in the server.
 #[derive(Debug)]
