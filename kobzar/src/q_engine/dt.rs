@@ -69,8 +69,8 @@ impl TypeId {
         DATETIME, DATETIME_OPT,
         UUID, UUID_OPT,
         VEC_UUID, VEC_UUID_OPT, // predefine for UUID (PK) arrays
-        HASH_SET, HASH_SET_OPT, // HashSet<T>
-        HASH_MAP, HASH_MAP_OPT, // HashMap<K, V>
+        SET, SET_OPT, // Set<T>
+        MAP, MAP_OPT, // Map<K, V>
 
         FK, FK_OPT, // generic foreign key
         FK_U32, FK_U32_OPT,
@@ -90,14 +90,14 @@ impl TypeId {
         VEC_FK_TIME, VEC_FK_TIME_OPT, // array of foreign keys to Time
         VEC_FK_DATETIME, VEC_FK_DATETIME_OPT, // array of foreign keys to DateTime
         VEC_FK_VEC_U8, VEC_FK_VEC_U8_OPT, // array of foreign keys to Vec<u8>
-        HASH_SET_FK_U64, HASH_SET_FK_U64_OPT, // HashSet of foreign keys to U64
-        HASH_SET_FK_U128, HASH_SET_FK_U128_OPT, // HashSet of foreign keys to U128
-        HASH_SET_FK_STR, HASH_SET_FK_STR_OPT, // HashSet of foreign keys to String
-        HASH_SET_FK_UUID, HASH_SET_FK_UUID_OPT, // HashSet of foreign keys to UUID
-        HASH_SET_FK_DATE, HASH_SET_FK_DATE_OPT, // HashSet of foreign keys to Date
-        HASH_SET_FK_TIME, HASH_SET_FK_TIME_OPT, // HashSet of foreign keys to Time
-        HASH_SET_FK_DATETIME, HASH_SET_FK_DATETIME_OPT, // HashSet of foreign keys to DateTime
-        HASH_SET_FK_VEC_U8, HASH_SET_FK_VEC_U8_OPT, // HashSet of foreign keys to Vec<u8>
+        SET_FK_U64, SET_FK_U64_OPT, // Set of foreign keys to U64
+        SET_FK_U128, SET_FK_U128_OPT, // Set of foreign keys to U128
+        SET_FK_STR, SET_FK_STR_OPT, // Set of foreign keys to String
+        SET_FK_UUID, SET_FK_UUID_OPT, // Set of foreign keys to UUID
+        SET_FK_DATE, SET_FK_DATE_OPT, // Set of foreign keys to Date
+        SET_FK_TIME, SET_FK_TIME_OPT, // Set of foreign keys to Time
+        SET_FK_DATETIME, SET_FK_DATETIME_OPT, // Set of foreign keys to DateTime
+        SET_FK_VEC_U8, SET_FK_VEC_U8_OPT, // Set of foreign keys to Vec<u8>
     }
 
     pub const fn is_build_in(self) -> bool {
