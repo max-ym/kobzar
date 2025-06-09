@@ -14,6 +14,11 @@ pub(crate) use query::*;
 /// These functions can be used in queries, and are compiled to machine code for fast execution.
 mod ffi;
 
+/// Storage layer, which is responsible for storing and retrieving data from the database,
+/// as well as implementing caching and indexing strategies.
+mod storage;
+pub use storage::*;
+
 /// Schema information for some database in the server.
 #[derive(Debug)]
 pub struct Schema {
