@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use super::*;
 use smallvec::SmallVec;
 
@@ -18,28 +20,135 @@ mod ffi;
 /// as well as implementing caching and indexing strategies.
 mod storage;
 pub use storage::*;
+use thiserror::Error;
+use tokio::sync::RwLock;
 
-/// Schema information for some database in the server.
+/// Valid identifier for a type in the schema.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IdentPath(String);
+
+impl Deref for IdentPath {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for IdentPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+pub type SchemaRw = RwLock<Db>;
+
+/// Generation of the schema.
+/// This is used to track transaction generations and ensure that
+/// the schema is consistent across transactions.
+/// Each time the transaction is created,
+/// the generation is incremented, so that other transactions could account for a "point in time"
+/// of the schema can mask their view of schema to access only changes that were made before
+/// the transaction started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Generation(u64);
+
+impl From<u64> for Generation {
+    fn from(value: u64) -> Self {
+        Generation(value)
+    }
+}
+
+impl From<Generation> for u64 {
+    fn from(value: Generation) -> Self {
+        value.0
+    }
+}
+
+impl Generation {
+    /// Increment the generation by one.
+    pub fn advance(self) -> Self {
+        Generation(self.0 + 1)
+    }
+}
+
+/// Schema information and database controls for some database in the server.
 #[derive(Debug)]
-pub struct Schema {
+pub struct Db {
     /// The name of the database.
-    name: String,
+    name: IdentPath,
 
+    /// Last type ID used in the schema.
+    /// This is used to generate unique type IDs for new types in the schema.
+    last_type_id: TypeId,
+
+    /// Last transaction generation of the database.
+    last_generation: Generation,
+
+    /// Types that are defined in the schema.
+    types: Types,
+
+    /// Map of retired structs, which are types that were removed or modified in the schema,
+    /// but still need to be kept for existing generations of transactions.
+    retired_structs: HashMap<(TypeId, Generation), Struct>,
+
+    /// Active transactions in the database.
+    active_transactions: HashMap<Generation, TransactionLocal>,
+}
+
+/// Local transaction context, which can be used to store temporary data
+/// during the execution of a transaction.
+/// This is used to store data that is not yet committed to the database,
+/// and can be used to perform operations that are not yet finalized.
+#[derive(Debug)]
+pub struct TransactionLocal {
+    /// Local types that were defined or updated in the transaction,
+    /// but not yet committed to the database schema.
+    types: Types,
+}
+
+/// Types that are defined in the schema. This does not include built-in types,
+/// as they are managed separately. This is used to store user-defined types,
+/// derived types, and generic instances that are defined in the schema.
+#[derive(Debug, Default)]
+pub struct Types {
     /// Map of structure names to their type IDs.
     /// This is used to quickly look up the type ID of a structure by its name.
     /// Also this allows to list all structures in the schema.
-    struct_names_to_id: HashMap<String, TypeId>,
+    struct_names_to_id: HashMap<IdentPath, TypeId>,
 
     /// All derived and user-defined types in the schema.
     /// Note that built-in types are not included here, as they are managed separately.
     types: HashMap<TypeId, TypeKind>,
 }
 
+#[derive(Debug, Clone)]
+pub enum TableStoreBehavior {
+    /// This table can independently store records in the database.
+    DirectlyStorable,
+
+    /// The table cannot be stored directly in the database, and can only be used
+    /// as a field in other records. This is useful for defining structures that
+    /// are not meant to be stored independently.
+    FieldOnly,
+
+    /// Only one record of this type can be stored in the database.
+    /// This is useful for defining singleton records that, for example,
+    /// store a configuration or some global state. Such table cannot be used as
+    /// a field in other records, as it is not meant to be stored
+    /// as a part of other records, but rather as a standalone single record.
+    /// Note that there will always be exactly one record of this type in the database,
+    /// both zero or many number of records are not allowed. However, this
+    /// record may have no fields, and then it can be used as a marker of sorts or as a
+    /// "module" to store functions (as its methods) in some named context.
+    Singleton,
+}
+
 /// Triggers for structures, which can be used to define custom behavior
 /// for operations on the structure, such as insert, update, delete, etc.
 /// These triggers can be used to perform custom actions, such as validation,
 /// transformation, or logging, when the structure is modified.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StructTriggers {
     /// Trigger for the structure before insert.
     /// This trigger is called before the structure is inserted into the database.
@@ -99,9 +208,19 @@ pub struct Struct {
     /// usage, or any other relevant information.
     /// Can be empty if no comment is provided.
     comment: String,
-    
+
     /// Structure specialization, which defines the specific kind of the structure.
     spec: StructSpec,
+}
+
+impl Struct {
+    pub fn new(spec: StructSpec) -> Self {
+        Struct {
+            triggers: StructTriggers::default(),
+            comment: String::new(),
+            spec,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -122,7 +241,7 @@ pub enum StructSpec {
     /// Mixed schemafull schemaless table,
     /// which is a table that can have both schemafull and schemaless fields.
     SchemafullSchemalessTable(SchemafullSchemalessTable),
-    
+
     /// Mixed schemafull adt schemaless table,
     /// which is a table that can have both schemafull ADT and schemaless fields.
     /// This is used to represent complex data structures that can have different shapes,
@@ -131,20 +250,20 @@ pub enum StructSpec {
     SchemafullAdtSchemalessTable(SchemafullAdtSchemalessTable),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemafullTable {
     /// Fields of the schemafull table.
     fields: Vec<Field>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AdtTable {
     /// Variants of the ADT table, each variant can have its own structure.
     /// The map is keyed by the variant name, and the value is the structure of the variant.
     variants: HashMap<String, Vec<Field>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemalessTable {
     /// The bound fields of the schemaless table.
     /// The map is keyed by the field name,
@@ -162,7 +281,7 @@ pub struct SchemalessTable {
     field_to_idx: HashMap<(String, Option<TypeId>), usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemafullSchemalessTable {
     /// The bound and fixed fields of the schemafull schemaless table.
     fields: Vec<FieldCfg>,
@@ -177,7 +296,7 @@ pub struct SchemafullSchemalessTable {
     bound_to_idx: HashMap<(String, Option<TypeId>), usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemafullAdtSchemalessTable {
     /// Variants of the ADT table, which can have multiple variants,
     /// each with its own structure.
@@ -266,7 +385,7 @@ pub struct GenericInstance {
 #[derive(Debug)]
 pub struct Field {
     /// The name of the field.
-    name: String,
+    name: IdentPath,
 
     /// The type of the field.
     ty: TypeId,
@@ -274,4 +393,148 @@ pub struct Field {
     /// Configuration for the field, which includes validation and transformation code,
     /// default value, and other field-specific settings.
     cfg: FieldCfg,
+}
+
+impl Db {
+    pub fn new(name: IdentPath) -> Self {
+        Db {
+            name,
+            last_generation: Generation(0),
+            last_type_id: TypeId::INVALID,
+            types: Types::default(),
+            retired_structs: HashMap::default(),
+            active_transactions: HashMap::default(),
+        }
+    }
+
+    /// Add a structure to the schema.
+    fn next_type_id(&mut self) -> TypeId {
+        let next = self.last_type_id.advance();
+        self.last_type_id = next;
+        next
+    }
+
+    // /// Ensure that the given name is free and does not conflict with existing structure names.
+    // /// If the name is already taken, returns an error.
+    // /// If the name is free, returns the name as is.
+    // fn ensure_free_name(&self, name: IdentPath) -> Result<IdentPath, RegisterStructError> {
+    //     if self.struct_names_to_id.contains_key(&name) {
+    //         Err(RegisterStructError::NameTaken { name })
+    //     } else {
+    //         Ok(name)
+    //     }
+    // }
+
+    // /// Register a new structure in the schema.
+    // pub fn add_struct(
+    //     &mut self,
+    //     name: IdentPath,
+    //     struc: Struct,
+    //     store_behavior: TableStoreBehavior,
+    // ) -> Result<TypeId, RegisterStructError> {
+    //     let name = self.ensure_free_name(name)?;
+    //     let type_id = self.next_type_id();
+    //     self.struct_names_to_id.insert(name, type_id);
+    //     self.types.insert(type_id, TypeKind::Struct(struc));
+    //     Ok(type_id)
+    // }
+
+    // /// Edit the structure in the schema.
+    // pub fn struct_mut(&mut self, id: TypeId) -> Result<&mut Struct, GetStructError> {
+    //     match self.types.get_mut(&id) {
+    //         Some(TypeKind::Struct(struc)) => Ok(struc),
+    //         Some(_) => Err(GetStructError::NotStruct(id)),
+    //         None => Err(GetStructError::NotFound(id)),
+    //     }
+    // }
+
+    // /// Get a reference to the structure in the schema.
+    // pub fn struct_ref(&self, id: TypeId) -> Result<&Struct, GetStructError> {
+    //     match self.types.get(&id) {
+    //         Some(TypeKind::Struct(struc)) => Ok(struc),
+    //         Some(_) => Err(GetStructError::NotStruct(id)),
+    //         None => Err(GetStructError::NotFound(id)),
+    //     }
+    // }
+}
+
+#[derive(Debug, Error)]
+pub enum RegisterStructError {
+    #[error("name {name} already is taken in the schema")]
+    NameTaken { name: IdentPath },
+}
+
+#[derive(Debug, Error)]
+pub enum GetStructError {
+    #[error("structure with ID {0} not found in the schema")]
+    NotFound(TypeId),
+
+    #[error("structure with ID {0} is not a struct")]
+    NotStruct(TypeId),
+}
+
+#[derive(Debug, Error)]
+pub enum IdentError {
+    #[error("identifier cannot be empty")]
+    Empty,
+
+    #[error("identifier `{ident}` contains invalid characters: {chars:?}")]
+    InvalidChars { ident: String, chars: Vec<char> },
+
+    #[error("identifier `{ident}` cannot start with a digit")]
+    CannotStartWithDigit { ident: String },
+
+    #[error("identifier `{ident}` cannot start with a colon")]
+    CannotStartWithColon { ident: String },
+
+    #[error("identifier `{ident}` cannot end with a colon")]
+    CannotEndWithColon { ident: String },
+}
+
+impl IdentPath {
+    /// Create a new identifier from a string.
+    /// Returns an error if the identifier is empty or contains invalid characters.
+    ///
+    /// Identifier can only contain alphanumeric characters and underscores.
+    /// It can also have a separator "::" to allow namespacing.
+    pub fn new(ident: String) -> Result<Self, IdentError> {
+        if let Some(first) = ident.chars().next() {
+            if first.is_numeric() {
+                return Err(IdentError::CannotStartWithDigit { ident });
+            }
+            if first == ':' {
+                return Err(IdentError::CannotStartWithColon { ident });
+            }
+            if ident.chars().last().unwrap() == ':' {
+                return Err(IdentError::CannotEndWithColon { ident });
+            }
+        } else {
+            return Err(IdentError::Empty);
+        }
+
+        let mut invalid_chars = Vec::new();
+        let mut push_invalid = |c: char| {
+            if !invalid_chars.contains(&c) {
+                invalid_chars.push(c);
+            }
+        };
+        let mut colon = 0;
+        for c in ident.chars() {
+            if c.is_alphanumeric() || c == '_' {
+                if colon != 2 && colon != 0 {
+                    push_invalid(c);
+                }
+            } else if c == ':' {
+                colon += 1;
+            } else {
+                push_invalid(c);
+            }
+        }
+
+        if !invalid_chars.is_empty() {
+            return Err(IdentError::InvalidChars { ident, chars: invalid_chars });
+        }
+
+        Ok(IdentPath(ident))
+    }
 }

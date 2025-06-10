@@ -43,6 +43,9 @@ macro_rules! ty_const {
 }
 
 impl TypeId {
+    /// Invalid type ID, used to represent an uninitialized or invalid type.
+    pub const INVALID: TypeId = TypeId(0);
+
     /// Optional type bit.
     pub const OPTION_BIT: u64 = 1 << 63;
 
@@ -148,6 +151,11 @@ impl TypeId {
 
     pub const unsafe fn new_unchecked(id: u64) -> Self {
         Self(id)
+    }
+
+    /// Advance to the next type ID. Can be used to generate new type IDs sequentially.
+    pub const fn advance(self) -> Self {
+        TypeId(self.0 + 1)
     }
 }
 

@@ -140,7 +140,7 @@ pub enum Query {
 
     /// Comment an index on a table.
     CommentIndex(CommentIndexQuery),
-    
+
     /// Rename an index on a table.
     RenameIndex(RenameIndexQuery),
 
@@ -275,26 +275,38 @@ pub struct CreateTableQuery {
     pub store_behavior: TableStoreBehavior,
 }
 
-#[derive(Debug, Clone)]
-pub enum TableStoreBehavior {
-    /// This table can independently store records in the database.
-    DirectlyStorable,
+// impl CreateTableQuery {
+//     pub async fn apply(self, schema: &SchemaRw) -> Result<(), CreateTableError> {
+//         use StructSpec as S;
+//         use TableKind as K;
+//         let ident = IdentPath::new(self.name)?;
+//         let spec = match self.table_kind {
+//             K::Schemafull => S::SchemafullTable(SchemafullTable::default()),
+//             K::SchemafullAdt => S::AdtTable(AdtTable::default()),
+//             K::Schemaless => S::SchemalessTable(SchemalessTable::default()),
+//             K::SchemafullSchemaless => {
+//                 S::SchemafullSchemalessTable(SchemafullSchemalessTable::default())
+//             }
+//             K::SchemafullAdtSchemaless => {
+//                 S::SchemafullAdtSchemalessTable(SchemafullAdtSchemalessTable::default())
+//             }
+//         };
 
-    /// The table cannot be stored directly in the database, and can only be used
-    /// as a field in other records. This is useful for defining structures that
-    /// are not meant to be stored independently.
-    FieldOnly,
+//         let mut s = schema.write().await;
+//         s.add_struct(ident, Struct::new(spec), self.store_behavior)?;
+//         Ok(())
+//     }
+// }
 
-    /// Only one record of this type can be stored in the database.
-    /// This is useful for defining singleton records that, for example,
-    /// store a configuration or some global state. Such table cannot be used as
-    /// a field in other records, as it is not meant to be stored
-    /// as a part of other records, but rather as a standalone single record.
-    /// Note that there will always be exactly one record of this type in the database,
-    /// both zero or many number of records are not allowed. However, this
-    /// record may have no fields, and then it can be used as a marker of sorts or as a
-    /// "module" to store functions (as its methods) in some named context.
-    Singleton,
+#[derive(Debug, Error)]
+pub enum CreateTableError {
+    /// The table with the given name already exists.
+    #[error(transparent)]
+    RegisterStructError(#[from] RegisterStructError),
+
+    /// The table name is invalid, e.g. it is empty or contains invalid characters.
+    #[error("Invalid table name: {0}")]
+    InvalidTableName(#[from] IdentError),
 }
 
 #[derive(Debug, Clone)]
