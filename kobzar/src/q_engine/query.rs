@@ -158,6 +158,15 @@ pub enum Query {
 
     /// Drop a function or a method from the database.
     DropFn(DropFnQuery),
+
+    /// Start a transaction.
+    StartTransaction(StartTransactionQuery),
+
+    /// Commit a transaction.
+    CommitTransaction(CommitTransactionQuery),
+
+    /// Rollback a transaction.
+    RollbackTransaction(RollbackTransactionQuery),
 }
 
 #[derive(Debug)]
@@ -825,4 +834,28 @@ pub struct DropFnQuery {
 
     /// If this is a method, the type of self argument should be passed to locate the method.
     pub self_arg: Option<TypeId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartTransactionQuery {
+    /// The isolation level of the transaction.
+    pub isolation: TransactionIsolation,
+}
+
+/// Attempt to commit the transaction.
+/// This will ensure that all operations in the transaction are valid and can be applied to the database.
+/// If the transaction is valid, it will be committed and all changes will be applied.
+/// If transaction cannot be committed, as per requirement of isolation level,
+/// it will return an error indicating the reason for the failure. The caller can then
+/// decide to satisfy the requirements, or rollback the transaction.
+#[derive(Debug, Clone)]
+pub struct CommitTransactionQuery {
+    pub generation: Generation,
+}
+
+/// Rollback the transaction.
+/// This will discard all changes made in the transaction.
+#[derive(Debug, Clone)]
+pub struct RollbackTransactionQuery {
+    pub generation: Generation,
 }
