@@ -7,6 +7,9 @@ use super::*;
 /// compiled later when needed. We receive Rust code from the client,
 /// so that we can compile it to machine code on the server side, ensuring safe
 /// sandboxed libraries during compilation.
+/// 
+/// Storing raw functions also allow to support multi-architecture clusters,
+/// and allow user to review the code, or to log the code for debugging or security purposes.
 #[derive(Debug, Clone)]
 pub struct Raw(pub String);
 

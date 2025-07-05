@@ -2,6 +2,8 @@ use std::ops::Deref;
 
 use super::*;
 use smallvec::SmallVec;
+use thiserror::Error;
+use tokio::sync::RwLock;
 
 /// Data types and structures storeable and queryable in Kobzar.
 mod dt;
@@ -20,8 +22,6 @@ mod ffi;
 /// as well as implementing caching and indexing strategies.
 mod storage;
 pub use storage::*;
-use thiserror::Error;
-use tokio::sync::RwLock;
 
 /// Valid identifier for a type in the schema.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -41,7 +41,8 @@ impl std::fmt::Display for IdentPath {
     }
 }
 
-pub type SchemaRw = RwLock<Db>;
+/// Database read-write lock.
+pub type DbRw = RwLock<Db>;
 
 /// Generation of the schema.
 /// This is used to track transaction generations and ensure that
@@ -53,6 +54,12 @@ pub type SchemaRw = RwLock<Db>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Generation(u64);
 
+impl std::fmt::Display for Generation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "x{:X}", self.0)
+    }
+}
+
 impl From<u64> for Generation {
     fn from(value: u64) -> Self {
         Generation(value)
@@ -61,7 +68,7 @@ impl From<u64> for Generation {
 
 impl From<Generation> for u64 {
     fn from(value: Generation) -> Self {
-        value.0
+        value.0.into()
     }
 }
 
@@ -82,29 +89,66 @@ pub struct Db {
     /// This is used to generate unique type IDs for new types in the schema.
     last_type_id: TypeId,
 
-    /// Last transaction generation of the database.
+    /// Next transaction generation of the database.
     last_generation: Generation,
 
     /// Types that are defined in the schema.
     types: Types,
 
-    /// Map of retired structs, which are types that were removed or modified in the schema,
-    /// but still need to be kept for existing generations of transactions.
-    retired_structs: HashMap<(TypeId, Generation), Struct>,
-
     /// Active transactions in the database.
     active_transactions: HashMap<Generation, TransactionLocal>,
+
+    /// The parent transaction (value generation) of the child transaction (key).
+    /// This is used to track the transaction hierarchy and ensure that
+    /// child can see the changes made by the parent transaction, by looking up the parent
+    /// generation in this map.
+    transaction_nesting: HashMap<Generation, Generation>,
 }
 
 /// Local transaction context, which can be used to store temporary data
 /// during the execution of a transaction.
 /// This is used to store data that is not yet committed to the database,
 /// and can be used to perform operations that are not yet finalized.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TransactionLocal {
-    /// Local types that were defined or updated in the transaction,
+    /// Isolation level of the transaction, which defines how the transaction
+    /// interacts with other transactions and the visibility of changes.
+    isolation: TransactionIsolation,
+
+    /// Local types that were defined in the transaction,
     /// but not yet committed to the database schema.
+    ///
+    /// Currently, we allow only to create new types in the transactions,
+    /// but to simplify the implementation, we don't allow to modify existing types,
+    /// or to remove them. Such operations are always applied to the main schema
+    /// directly.
     types: Types,
+}
+
+/// Transaction isolation, which can be used to define the behavior of the transaction data
+/// access and visibility.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransactionIsolation {
+    /// All committed changes from other transactions are visible to the current transaction.
+    /// Changes made by the current transaction are not visible to other transactions
+    /// until the transaction is committed.
+    #[default]
+    ReadCommitted,
+
+    /// Transaction registers conditions for the data it accesses. If any of the conditions
+    /// would yield other set of records than the ones that were visible at the start of
+    /// the transaction, due to actions of other transactions, this transaction will not
+    /// be allowed to commit, unless those external changes are acknowledged by the transaction.
+    GuardedReadCommitted,
+
+    /// Transaction only is able to read data that was committed at the time
+    /// the transaction started. Any changes made by other transactions after the start
+    /// of this transaction are not visible to it. If there were changes
+    /// to the data that this transaction read, those changes are not
+    /// notified to the current transaction even on commit - it will be able to commit
+    /// anyhow with no errors or warnings. However, if the transaction tries to modify
+    /// the data that was changed by other transactions, it will receive an error on commit attempt.
+    PointOfTime,
 }
 
 /// Types that are defined in the schema. This does not include built-in types,
@@ -115,11 +159,93 @@ pub struct Types {
     /// Map of structure names to their type IDs.
     /// This is used to quickly look up the type ID of a structure by its name.
     /// Also this allows to list all structures in the schema.
+    ///
+    /// Note that this map can contain dangling references to types that were removed
+    /// from the schema, so if you need to check the existence of a structure,
+    /// you should also check the `types` map for the type ID.
+    /// If the structure was removed, it will still be present in this map,
+    /// but the type ID will not be present in the `types` map.
     struct_names_to_id: HashMap<IdentPath, TypeId>,
 
     /// All derived and user-defined types in the schema.
     /// Note that built-in types are not included here, as they are managed separately.
     types: HashMap<TypeId, TypeKind>,
+}
+
+impl Types {
+    /// Ensure that the given name is free and does not conflict with existing structure names.
+    /// If the name is already taken, returns an error.
+    /// If the name is free, returns the name as is.
+    pub fn ensure_free_name(&self, name: IdentPath) -> Result<IdentPath, RegisterStructError> {
+        if self.struct_names_to_id.contains_key(&name) {
+            Err(RegisterStructError::NameTaken { name })
+        } else {
+            Ok(name)
+        }
+    }
+
+    /// Add a structure to the schema.
+    pub fn add_struct(
+        &mut self,
+        name: IdentPath,
+        struc: Struct,
+        type_id: TypeId,
+    ) -> Result<(), RegisterStructError> {
+        let name = self.ensure_free_name(name)?;
+        self.struct_names_to_id.insert(name, type_id);
+        self.types.insert(type_id, TypeKind::Struct(struc));
+        Ok(())
+    }
+
+    pub fn struct_ref(&self, id: TypeId) -> Result<&Struct, GetStructError> {
+        match self.types.get(&id) {
+            Some(TypeKind::Struct(struc)) => Ok(struc),
+            Some(_) => Err(GetStructError::NotStruct(id)),
+            None => Err(GetStructError::NotFound(id)),
+        }
+    }
+
+    pub fn struct_mut(&mut self, id: TypeId) -> Result<&mut Struct, GetStructError> {
+        match self.types.get_mut(&id) {
+            Some(TypeKind::Struct(struc)) => Ok(struc),
+            Some(_) => Err(GetStructError::NotStruct(id)),
+            None => Err(GetStructError::NotFound(id)),
+        }
+    }
+
+    pub fn replace_struct(
+        &mut self,
+        id: TypeId,
+        new_struct: Struct,
+    ) -> Result<Struct, (Struct, GetStructError)> {
+        use hashbrown::hash_map::Entry::*;
+        match self.types.entry(id) {
+            Vacant(_) => Err((new_struct, GetStructError::NotFound(id))),
+            Occupied(mut entry) => {
+                if entry.get().is_struct() {
+                    Ok(entry
+                        .insert(TypeKind::Struct(new_struct))
+                        .try_into_struct()
+                        .expect("we checked that the type is a struct"))
+                } else {
+                    Err((new_struct, GetStructError::NotStruct(id)))
+                }
+            }
+        }
+    }
+}
+
+#[repr(transparent)]
+#[must_use = "Generation token should be returned to the Db after use to free the transaction"]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerationToken(Generation);
+
+impl Deref for GenerationToken {
+    type Target = Generation;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +322,19 @@ pub enum TypeKind {
     /// A generic type, which can be used to define types like `Vec<T>`, where `T` is a type parameter.
     /// The first type in the generic is the base type, and the rest are type parameters.
     GenericInstance(GenericInstance),
+}
+
+impl TypeKind {
+    pub const fn is_struct(&self) -> bool {
+        matches!(self, TypeKind::Struct(_))
+    }
+
+    pub fn try_into_struct(self) -> Result<Struct, ()> {
+        match self {
+            TypeKind::Struct(struc) => Ok(struc),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -402,8 +541,8 @@ impl Db {
             last_generation: Generation(0),
             last_type_id: TypeId::INVALID,
             types: Types::default(),
-            retired_structs: HashMap::default(),
             active_transactions: HashMap::default(),
+            transaction_nesting: HashMap::default(),
         }
     }
 
@@ -413,49 +552,6 @@ impl Db {
         self.last_type_id = next;
         next
     }
-
-    // /// Ensure that the given name is free and does not conflict with existing structure names.
-    // /// If the name is already taken, returns an error.
-    // /// If the name is free, returns the name as is.
-    // fn ensure_free_name(&self, name: IdentPath) -> Result<IdentPath, RegisterStructError> {
-    //     if self.struct_names_to_id.contains_key(&name) {
-    //         Err(RegisterStructError::NameTaken { name })
-    //     } else {
-    //         Ok(name)
-    //     }
-    // }
-
-    // /// Register a new structure in the schema.
-    // pub fn add_struct(
-    //     &mut self,
-    //     name: IdentPath,
-    //     struc: Struct,
-    //     store_behavior: TableStoreBehavior,
-    // ) -> Result<TypeId, RegisterStructError> {
-    //     let name = self.ensure_free_name(name)?;
-    //     let type_id = self.next_type_id();
-    //     self.struct_names_to_id.insert(name, type_id);
-    //     self.types.insert(type_id, TypeKind::Struct(struc));
-    //     Ok(type_id)
-    // }
-
-    // /// Edit the structure in the schema.
-    // pub fn struct_mut(&mut self, id: TypeId) -> Result<&mut Struct, GetStructError> {
-    //     match self.types.get_mut(&id) {
-    //         Some(TypeKind::Struct(struc)) => Ok(struc),
-    //         Some(_) => Err(GetStructError::NotStruct(id)),
-    //         None => Err(GetStructError::NotFound(id)),
-    //     }
-    // }
-
-    // /// Get a reference to the structure in the schema.
-    // pub fn struct_ref(&self, id: TypeId) -> Result<&Struct, GetStructError> {
-    //     match self.types.get(&id) {
-    //         Some(TypeKind::Struct(struc)) => Ok(struc),
-    //         Some(_) => Err(GetStructError::NotStruct(id)),
-    //         None => Err(GetStructError::NotFound(id)),
-    //     }
-    // }
 }
 
 #[derive(Debug, Error)]
@@ -532,7 +628,10 @@ impl IdentPath {
         }
 
         if !invalid_chars.is_empty() {
-            return Err(IdentError::InvalidChars { ident, chars: invalid_chars });
+            return Err(IdentError::InvalidChars {
+                ident,
+                chars: invalid_chars,
+            });
         }
 
         Ok(IdentPath(ident))

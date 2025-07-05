@@ -38,8 +38,8 @@
 //!   and lazy materialization of complex objects.
 //! 
 //! - **Graph Model**: Kobzar implements a native graph model with first-class support for nodes,
-//!   edges, and properties. Graph traversals are optimized through specialized indexes and
-//!   caching strategies.
+//!   edges, and properties. Graph traversals are optimized through specialized indexes,
+//!   storage and caching strategies.
 //! 
 //! ## Implementation Details
 //! 
@@ -70,7 +70,9 @@
 //!   guarantee that a series of operations will either all succeed or all fail.
 //! 
 //! - **JIT compilation**: Kobzar uses JIT compilation to compile received bytecode
-//!   into machine code, which allows for fast execution of queries.
+//!   into machine code, which allows for fast execution of queries. For triggers and
+//!   stored procedures, the code is compiled ahead of time, and then executed
+//!   by the query engine.
 
 #![allow(dead_code)] // while we are still developing the code, we will have some dead code
 
@@ -84,6 +86,7 @@ pub mod cfg;
 /// calculating layouts, and optimizing storage.
 pub mod q_engine;
 
+/// Very fast hash map implementation to be used in Kobzar.
 type HashMap<K, V> = hashbrown::HashMap<K, V, ahash::RandomState>;
 
 pub fn main() {
