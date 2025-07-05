@@ -43,7 +43,7 @@ pub struct DeviceConfig {
     pub path: PathBuf,
 
     /// Maximum concurrent IO operations on the device.
-    /// If not set, the default value is 32.
+    /// If not set, the default value is 1.
     pub concurrency: Option<u32>,
 }
 
