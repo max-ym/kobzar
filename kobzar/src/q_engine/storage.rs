@@ -52,6 +52,8 @@ impl Wal {
     /// If `create` is false, the file must exist.
     /// If the file does not exist, an error will be returned.
     pub async fn open_by_lsn(path: PathBuf, lsn: u64, create: bool) -> std::io::Result<Self> {
+        let capacity = cfg().device_at(&path).io_combine_bytes as usize;
+        
         let file = OpenOptions::new()
             .create(create)
             .append(true)
@@ -61,7 +63,7 @@ impl Wal {
 
         Ok(Wal {
             path,
-            file: BufWriter::new(file),
+            file: BufWriter::with_capacity(capacity, file),
             offset_lsn: lsn,
         })
     }

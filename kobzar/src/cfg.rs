@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -55,6 +58,39 @@ impl Cfg {
 
     pub fn worker_threads(&self) -> usize {
         self.worker_threads
+    }
+
+    /// Find the device configuration for the given path.
+    /// We move from most specific to least specific path,
+    /// so that if there are multiple devices with similar path,
+    /// one being a child of another,
+    /// the most specific one is returned.
+    pub fn device_at(&self, path: impl AsRef<Path>) -> &DeviceConfig {
+        let mut best: Option<(&DeviceConfig, usize)> = None;
+
+        for device in &self.file.io_device {
+            if path.as_ref().starts_with(&device.path) {
+                let cnt = device.path.iter().count();
+                if let Some((_, best_cnt)) = best {
+                    if best_cnt < cnt {
+                        best = Some((device, cnt));
+                    }
+                } else {
+                    best = Some((device, cnt));
+                }
+            }
+        }
+
+        if let Some((device, _)) = best {
+            device
+        } else {
+            // If no device is found, return the default device configuration.
+            // Normally this should not happen, as the default should be set
+            // on configuration load, but we provide it as fallback just in case.
+            use std::sync::OnceLock;
+            static DEFAULT_DEVICE: OnceLock<DeviceConfig> = OnceLock::new();
+            DEFAULT_DEVICE.get_or_init(DeviceConfig::default)
+        }
     }
 }
 
@@ -197,7 +233,7 @@ impl Default for ConfigFile {
             max_connections: 1024,
             io_device: vec![DeviceConfig::default()],
             wal_frag_soft_max_bytes: 1024 * 1024 * 10, // 10 MB
-            wal_frag_min_bytes: 1024 * 1024, // 1 MB
+            wal_frag_min_bytes: 1024 * 1024,           // 1 MB
         }
     }
 }
