@@ -60,6 +60,10 @@ impl Cfg {
         self.worker_threads
     }
 
+    pub fn primary_index_cache_recs(&self) -> usize {
+        self.file.primary_index_cache_recs as usize
+    }
+
     /// Find the device configuration for the given path.
     /// We move from most specific to least specific path,
     /// so that if there are multiple devices with similar path,
@@ -116,6 +120,9 @@ pub struct ConfigFile {
     /// Minimum size of the Write-Ahead Log (WAL) fragment in bytes.
     /// The log won't be split into smaller fragments than this size.
     pub wal_frag_min_bytes: u64,
+
+    /// Number of records in the primary index cache.
+    pub primary_index_cache_recs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -234,6 +241,7 @@ impl Default for ConfigFile {
             io_device: vec![DeviceConfig::default()],
             wal_frag_soft_max_bytes: 1024 * 1024 * 10, // 10 MB
             wal_frag_min_bytes: 1024 * 1024,           // 1 MB
+            primary_index_cache_recs: 128,
         }
     }
 }
