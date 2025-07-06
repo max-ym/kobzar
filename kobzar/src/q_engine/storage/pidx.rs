@@ -3,7 +3,7 @@ use tokio::io::AsyncReadExt;
 use super::*;
 
 /// Page size in records to store Primary Index Records.
-pub const PAGE_SIZE_RECS: u64 = 16384; // 1 MiB per page (which is 64 byte)
+pub const PAGE_SIZE_RECS: u64 = 16384;
 
 /// Page of primary index records.
 /// Page is a fixed-size structure that contains metadata about the records in the heap file.
@@ -16,9 +16,6 @@ pub const PAGE_SIZE_RECS: u64 = 16384; // 1 MiB per page (which is 64 byte)
 pub struct Page {
     /// Grouped fields for cache locality.
     pub group: [PageGroupFields; PAGE_SIZE_RECS as usize],
-
-    /// Record flags.
-    pub flags: [Flags; PAGE_SIZE_RECS as usize],
 
     /// Transaction ID that created the record.
     pub xmin: [u64; PAGE_SIZE_RECS as usize],
@@ -50,10 +47,6 @@ pub struct PageGroupFields {
     /// Offset of the record in the heap file.
     pub offset: u64,
 }
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct Flags(u64);
 
 #[derive(Debug)]
 pub struct PageStore {
