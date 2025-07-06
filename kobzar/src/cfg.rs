@@ -73,6 +73,13 @@ pub struct ConfigFile {
     /// Per-IO device configuration.
     #[serde(default)]
     pub io_device: Vec<DeviceConfig>,
+
+    /// Soft maximum size of the Write-Ahead Log (WAL) fragment in bytes.
+    pub wal_frag_soft_max_bytes: u64,
+
+    /// Minimum size of the Write-Ahead Log (WAL) fragment in bytes.
+    /// The log won't be split into smaller fragments than this size.
+    pub wal_frag_min_bytes: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +94,21 @@ pub struct DeviceConfig {
     /// Maximum concurrent IO operations on the device.
     /// If not set, the default value is 1.
     pub concurrency: Option<u32>,
+
+    /// When large updates are made, try to combine them into larger IO operations
+    /// to reduce the number of IO operations. This parameters sets the size of the
+    /// combined IO in bytes.
+    pub io_combine_bytes: u64,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::from("/"),
+            concurrency: Some(1),
+            io_combine_bytes: 8192,
+        }
+    }
 }
 
 /// Configuration for the server, which can be loaded from environment variables.
@@ -173,7 +195,9 @@ impl Default for ConfigFile {
         Self {
             worker_threads: 0,
             max_connections: 1024,
-            io_device: Vec::new(),
+            io_device: vec![DeviceConfig::default()],
+            wal_frag_soft_max_bytes: 1024 * 1024 * 10, // 10 MB
+            wal_frag_min_bytes: 1024 * 1024, // 1 MB
         }
     }
 }
