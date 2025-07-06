@@ -52,6 +52,9 @@ pub enum Query {
     /// Comment table validation query can be used to add a comment to a table validation.
     CommentTableValidation(CommentTableValidationQuery),
 
+    /// Rename table validation query can be used to rename a table validation.
+    RenameTableValidation(RenameTableValidationQuery),
+
     /// Drop table validation query can be used to drop a validation from the table.
     DropTableValidation(DropTableValidationQuery),
 
@@ -396,6 +399,18 @@ pub struct CommentTableValidationQuery {
     /// The comment to add to the validation.
     /// If empty, the comment will be removed.
     pub comment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameTableValidationQuery {
+    /// The type of the table to rename the validation in.
+    pub table: TypeId,
+
+    /// The index of the validation to rename.
+    pub validation_idx: FieldIdx,
+
+    /// The new name of the validation.
+    pub new_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -764,17 +779,7 @@ pub enum IndexCfg {
 
     /// Index that accounts for ordering of the indexed fields. This speeds up orders, range,
     /// equality and other queries that can benefit from the index.
-    Order {
-        /// The fields to index.
-        fields: Vec<FieldIdx>,
-
-        /// Whether the index is ascending or descending.
-        /// If `true`, the index is ascending, otherwise it is descending.
-        is_ascending: bool,
-
-        /// Whether optional values with [None] should be at the top or the bottom of the index.
-        none_is_first: bool,
-    },
+    Order(Vec<OrderIndexFieldCfg>),
 
     /// Index that is used for equality checks. This is typically used for fields that are
     /// frequently used in equality conditions, such as foreign keys or other fields that
@@ -783,6 +788,19 @@ pub enum IndexCfg {
         /// The fields to index.
         fields: Vec<FieldIdx>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OrderIndexFieldCfg {
+    /// The fields to index.
+    pub field_idx: FieldIdx,
+
+    /// Whether the index is ascending or descending.
+    /// If `true`, the index is ascending, otherwise it is descending.
+    pub is_ascending: bool,
+
+    /// Whether optional values with [None] should be at the top or the bottom of the index.
+    pub none_is_first: bool,
 }
 
 #[derive(Debug, Clone)]

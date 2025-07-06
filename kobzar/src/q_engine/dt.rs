@@ -157,6 +157,10 @@ impl TypeId {
     pub const fn advance(self) -> Self {
         TypeId(self.0 + 1)
     }
+
+    pub const fn to_le_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
 }
 
 impl From<TypeId> for u64 {

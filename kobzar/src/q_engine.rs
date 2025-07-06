@@ -641,3 +641,19 @@ impl IdentPath {
         Ok(IdentPath(ident))
     }
 }
+
+/// An enum that has a corresponding type code written to the WAL file.
+/// This is used to identify the type of the entry in the WAL file,
+/// so that it can be read and processed correctly.
+pub trait WalCode {
+    fn wal_code(&self) -> u64;
+
+    fn wal_code_bytes(&self) -> [u8; 8] {
+        self.wal_code().to_le_bytes()
+    }
+}
+
+/// Trait for types that can be created from a WAL code.
+pub trait FromWalCode: WalCode {
+    fn from_wal_code(code: u64) -> Self;
+}
