@@ -76,7 +76,7 @@ pub struct Key {
 /// A key that is aligned to the page boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct PageBoundKey(pub Key);
+pub struct PageBoundKey(Key);
 
 impl Deref for PageBoundKey {
     type Target = Key;
