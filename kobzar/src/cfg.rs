@@ -5,8 +5,8 @@ use tracing::info;
 
 #[derive(Debug)]
 pub struct Cfg {
-    pub file: ConfigFile,
-    pub env: ConfigEnv,
+    file: ConfigFile,
+    env: ConfigEnv,
     worker_threads: usize,
 }
 
