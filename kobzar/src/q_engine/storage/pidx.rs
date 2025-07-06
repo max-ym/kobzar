@@ -68,7 +68,7 @@ pub struct PageStore {
     pages: Vec<Page>,
 
     /// Map page ID to page metadata.
-    page_map: HashMap<Key, CacheMeta>,
+    page_map: HashMap<PageBoundKey, CacheMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,15 +80,28 @@ pub struct Key {
     pub item: u64,
 }
 
+/// A key that is aligned to the page boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct PageBoundKey(pub Key);
+
+impl Deref for PageBoundKey {
+    type Target = Key;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Key {
     /// Create a new key for the given type ID and item number where
     /// the item number is aligned to the page boundaries.
     /// This effectively can create a key for the page in the cache from the item number.
-    pub const fn page_bound(self) -> Self {
-        Key {
+    pub const fn page_bound(self) -> PageBoundKey {
+        PageBoundKey(Key {
             type_id: self.type_id,
             item: self.item - (self.item % PAGE_SIZE_RECS),
-        }
+        })
     }
 
     /// Get the in-page index for the item.
@@ -173,9 +186,9 @@ impl PageStore {
     }
 
     /// Load a page from disk by its item key.
-    async fn load_from_disk(&self, item_key: Key) -> Result<Page, PageReadError> {
+    async fn load_from_disk(&self, item_key: PageBoundKey) -> Result<Page, PageReadError> {
         // If not in cache, we need to load it from disk
-        let filename = Self::filename(item_key.page_bound());
+        let filename = Self::filename(item_key);
         let path = self.path.join(&filename);
         let mut file = tokio::fs::File::open(&path).await?;
 
@@ -195,12 +208,8 @@ impl PageStore {
     }
 
     /// Get the name of the file that stores the page for the given item key.
-    fn filename(item_key: Key) -> String {
-        format!(
-            "{:x}_{:x}.pidx",
-            item_key.type_id,
-            item_key.page_bound().item
-        )
+    fn filename(item_key: PageBoundKey) -> String {
+        format!("{:x}_{:x}.pidx", item_key.type_id, item_key.item)
     }
 
     /// Get a mutable reference to the page that contains the item with the given key,
