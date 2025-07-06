@@ -212,9 +212,9 @@ impl Wal {
                 }
                 CreateTable {
                     type_id,
-                    name,
                     kind,
                     store_behavior,
+                    name,
                 } => {
                     write(&type_id.to_le_bytes()).await?;
                     write(&kind.wal_code_bytes()).await?;
