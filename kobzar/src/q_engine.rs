@@ -77,6 +77,10 @@ impl Generation {
     pub fn advance(self) -> Self {
         Generation(self.0 + 1)
     }
+
+    pub fn to_le_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
 }
 
 /// Schema information and database controls for some database in the server.

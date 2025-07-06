@@ -1,3 +1,6 @@
+use blake2::digest::consts::U32;
+use blake2::digest::generic_array::GenericArray;
+use blake2::Digest;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
@@ -53,7 +56,7 @@ impl Wal {
     /// If the file does not exist, an error will be returned.
     pub async fn open_by_lsn(path: PathBuf, lsn: u64, create: bool) -> std::io::Result<Self> {
         let capacity = cfg().device_at(&path).io_combine_bytes as usize;
-        
+
         let file = OpenOptions::new()
             .create(create)
             .append(true)
@@ -140,12 +143,111 @@ impl Wal {
         Ok(())
     }
 
-    async fn write_entry(&mut self, _entry: &WalEntry<'_>) -> Result<(), WalError> {
-        todo!()
+    /// Write a WAL entry to the file.
+    ///
+    /// The entry has the following format:
+    /// `size: u64` - size of the entry in bytes (without final padding)
+    /// `blake2 hash: u256` - hash of the entry data
+    /// `kind_flag: u8`
+    /// `array of bytes representing the entry data`
+    /// `padding to align to 8 bytes`
+    /// 
+    /// We use padding to ensure that the entry is aligned to 8 bytes,
+    /// which will make processing more efficient for modern 64-bit CPUs.
+    async fn write_entry(&mut self, entry: &WalEntry<'_>) -> Result<(), WalError> {
+        use WalEntry::*;
+        let kind_flag: u8 = match entry {
+            Insert { .. } => 0x01,
+            Update { .. } => 0x02,
+            Delete { .. } => 0x03,
+            CreateStorage { .. } => 0x04,
+            DropStorage { .. } => 0x05,
+        };
+
+        let mut size = 0u64;
+        let mut hasher = blake2::Blake2b::new();
+        
+        size += 8; // for entry size
+        size += 32; // for blake2 hash (256 bits = 32 bytes)
+        size += 1; // for kind_flag
+        hasher.update(&[kind_flag]);
+        write_entry(entry, async |data| {
+            size += data.len() as u64;
+            hasher.update(data);
+            Ok(())
+        }).await?;
+        let padding = 8 - (size % 8);
+
+        let hash: GenericArray<u8, U32> = hasher.finalize();
+        debug_assert_eq!(hash.len(), 32, "Blake2b hash should be 32 bytes long");
+
+        // Make actual write to the file.
+        self.file.write_all(&size.to_le_bytes()).await?;
+        self.file.write_all(&hash).await?;
+        self.file.write_all(&[kind_flag]).await?;
+        write_entry(entry, async |data| self.file.write_all(data).await).await?;
+        for _ in 0..padding {
+            self.file.write_all(&[0]).await?; // padding with zeros
+        }
+
+        async fn write_entry(
+            entry: &WalEntry<'_>,
+            mut write: impl AsyncFnMut(&[u8]) -> std::io::Result<()>,
+        ) -> std::io::Result<()> {
+            use WalEntry::*;
+            match entry {
+                Insert {
+                    tx,
+                    storage,
+                    record,
+                    data,
+                } => {
+                    write(&tx.to_le_bytes()).await?;
+                    write(&storage.to_le_bytes()).await?;
+                    write(&record.to_le_bytes()).await?;
+                    write(data).await?;
+                }
+                Update {
+                    tx,
+                    storage,
+                    old_record,
+                    new_record,
+                    data,
+                } => {
+                    write(&tx.to_le_bytes()).await?;
+                    write(&storage.to_le_bytes()).await?;
+                    write(&old_record.to_le_bytes()).await?;
+                    write(&new_record.to_le_bytes()).await?;
+                    write(data).await?;
+                }
+                Delete {
+                    tx,
+                    storage,
+                    record,
+                } => {
+                    write(&tx.to_le_bytes()).await?;
+                    write(&storage.to_le_bytes()).await?;
+                    write(&record.to_le_bytes()).await?;
+                }
+                CreateStorage { tx, storage } => {
+                    write(&tx.to_le_bytes()).await?;
+                    write(&storage.to_le_bytes()).await?;
+                }
+                DropStorage { tx, storage } => {
+                    write(&tx.to_le_bytes()).await?;
+                    write(&storage.to_le_bytes()).await?;
+                }
+            }
+            Ok(())
+        }
+
+        Ok(())
     }
 }
 
-/// WAL entry types
+/// WAL entry types for writing to the Write-Ahead Log (WAL).
+/// These entries represent different types of operations that can be logged,
+/// such as inserting, updating, or deleting records, as well as creating or dropping storage.
 #[derive(Debug, Clone)]
 pub enum WalEntry<'data> {
     Insert {
@@ -174,6 +276,14 @@ pub enum WalEntry<'data> {
         tx: Generation,
         storage: Id,
     },
+}
+
+impl<'data> WalEntry<'data> {
+    /// Write the entry to the WAL.
+    pub async fn write_to_wal(&self, wal: &mut Wal) -> Result<(), WalError> {
+        wal.write_entry(self).await?;
+        Ok(())
+    }
 }
 
 // Additional error types
