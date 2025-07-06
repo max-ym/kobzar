@@ -201,9 +201,6 @@ impl Wal {
                     write(&storage.to_le_bytes()).await?;
                     write(&record.to_le_bytes()).await?;
                 }
-                Start => {
-                    // No data to write for Start
-                }
                 Commit => {
                     // No data to write for Commit
                 }
@@ -591,13 +588,9 @@ pub enum WalEntry<'data> {
         record: Id,
     },
 
-    /// Mark a start of some transaction. This is useful on restore after crash,
-    /// when we want to replay the WAL entries, so that we can see which transactions
-    /// were started but not committed, and which transactions were committed.
-    Start,
-
     /// Commit a transaction, which means that all changes made by the transaction
-    /// will be applied to the storage.
+    /// will be applied to the storage. The start of the transaction is not explicitly logged,
+    /// but it can be tracked by the advanced generation number introduced in the WAL.
     Commit,
 
     /// Rollback a transaction, which means that all changes made by the transaction
@@ -842,7 +835,6 @@ impl WalCode for WalEntry<'_> {
             Insert { .. } => 0x01,
             Update { .. } => 0x02,
             Delete { .. } => 0x03,
-            Start { .. } => 0x04,
             Commit { .. } => 0x05,
             Rollback { .. } => 0x06,
             CreateTable { .. } => 0x07,
