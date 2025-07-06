@@ -151,7 +151,7 @@ pub enum WalEntry<'data> {
     Insert {
         tx: Generation,
         storage: Id,
-        header: RecHeader,
+        record: Id,
         data: &'data [u8],
     },
     Update {
@@ -159,7 +159,6 @@ pub enum WalEntry<'data> {
         storage: Id,
         old_record: Id,
         new_record: Id,
-        new_record_xmin: Generation,
         data: &'data [u8],
     },
     Delete {
@@ -226,6 +225,36 @@ pub enum SerializationError {
     DeserializeFailed,
 }
 
+struct WalFileLsnStream {
+    read_dir: tokio::fs::ReadDir,
+}
+
+impl WalFileLsnStream {
+    pub async fn new(path: &PathBuf) -> std::io::Result<Self> {
+        let read_dir = tokio::fs::read_dir(&path)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(WalFileLsnStream { read_dir })
+    }
+
+    pub async fn next(&mut self) -> std::io::Result<Option<u64>> {
+        if let Some(entry) = self.read_dir.next_entry().await? {
+            let file_name = entry.file_name();
+            if let Some(name_str) = file_name.to_str() {
+                if let Some(lsn_str) = name_str
+                    .strip_prefix("main_")
+                    .and_then(|s| s.strip_suffix(".wal"))
+                {
+                    if let Ok(lsn) = lsn_str.parse::<u64>() {
+                        return Ok(Some(lsn));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// The metadata for a record in the storage.
 /// This is a packed structure to make sure it compiles into the same layout,
 /// as we store this in the file system. It has to be compatible among different versions
@@ -262,36 +291,6 @@ pub struct RecHeader {
 
     /// The offset of the record in the storage.
     pub data_ptr: u64,
-}
-
-struct WalFileLsnStream {
-    read_dir: tokio::fs::ReadDir,
-}
-
-impl WalFileLsnStream {
-    pub async fn new(path: &PathBuf) -> std::io::Result<Self> {
-        let read_dir = tokio::fs::read_dir(&path)
-            .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(WalFileLsnStream { read_dir })
-    }
-
-    pub async fn next(&mut self) -> std::io::Result<Option<u64>> {
-        if let Some(entry) = self.read_dir.next_entry().await? {
-            let file_name = entry.file_name();
-            if let Some(name_str) = file_name.to_str() {
-                if let Some(lsn_str) = name_str
-                    .strip_prefix("main_")
-                    .and_then(|s| s.strip_suffix(".wal"))
-                {
-                    if let Ok(lsn) = lsn_str.parse::<u64>() {
-                        return Ok(Some(lsn));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
 }
 
 impl From<RecHeaderStorable> for RecHeader {
