@@ -98,7 +98,7 @@ pub fn main() {
 
     tokio::runtime::Builder::new_multi_thread()
         .thread_name("worker")
-        .worker_threads(cfg().file.worker_threads as _)
+        .worker_threads(cfg().worker_threads())
         .enable_all()
         .build()
         .expect("failed to create Tokio runtime")

@@ -7,12 +7,55 @@ use tracing::info;
 pub struct Cfg {
     pub file: ConfigFile,
     pub env: ConfigEnv,
+    worker_threads: usize,
 }
 
 pub fn init() -> Cfg {
     let env = ConfigEnv::load();
     let file = ConfigFile::load(&env);
-    Cfg { file, env }
+
+    let worker_threads = if file.worker_threads == 0 {
+        num_cpus::get()
+    } else {
+        file.worker_threads as usize
+    };
+
+    Cfg {
+        file,
+        env,
+        worker_threads,
+    }
+}
+
+impl Cfg {
+    /// Get the address and port to bind the server to.
+    pub fn bind(&self) -> SocketAddr {
+        self.env.bind
+    }
+
+    /// Get the path to store system database files.
+    pub fn syspath(&self) -> &PathBuf {
+        &self.env.syspath
+    }
+
+    /// Get the root user for the system.
+    pub fn root_usr(&self) -> &str {
+        &self.env.root_usr
+    }
+
+    /// Get the root password for the system.
+    pub fn root_pwd(&self) -> &str {
+        &self.env.root_pwd
+    }
+
+    /// Get the root key for the system.
+    pub fn root_key(&self) -> &str {
+        &self.env.root_key
+    }
+
+    pub fn worker_threads(&self) -> usize {
+        self.worker_threads
+    }
 }
 
 /// Configuration for the server, which can be loaded from a configuration file.
@@ -20,8 +63,7 @@ pub fn init() -> Cfg {
 #[serde(deny_unknown_fields, default)]
 pub struct ConfigFile {
     /// Number of worker threads to execute the server logic.
-    /// If not set, the number of worker threads is equal to the number of CPU cores.
-    /// Cannot be less than 1.
+    /// If set to 0, the number of worker threads is equal to the number of CPU cores.
     pub worker_threads: u32,
 
     /// Maximum number of connections to the server.
@@ -129,7 +171,7 @@ impl ConfigFile {
 impl Default for ConfigFile {
     fn default() -> Self {
         Self {
-            worker_threads: num_cpus::get() as u32,
+            worker_threads: 0,
             max_connections: 1024,
             io_device: Vec::new(),
         }
