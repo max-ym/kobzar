@@ -163,6 +163,9 @@ pub struct Key {
 
     /// Primary index item number.
     pub item: u64,
+
+    /// Database ID.
+    pub db: u64,
 }
 
 /// A key that is aligned to the page boundaries.
@@ -186,6 +189,7 @@ impl Key {
         PageBoundKey(Key {
             type_id: self.type_id,
             item: self.item - (self.item % PAGE_SIZE_RECS as u64),
+            db: self.db,
         })
     }
 
