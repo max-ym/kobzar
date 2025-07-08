@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 
-use pulp::Arch;
+use pulp::{Arch, Simd, WithSimd, bytemuck};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
 
@@ -57,6 +57,110 @@ impl Default for Page {
     }
 }
 
+struct VisibilityMapCalc<'a> {
+    page: &'a Page,
+    x: u64,
+}
+
+impl<'a> WithSimd for VisibilityMapCalc<'a> {
+    type Output = [u8; PAGE_SIZE_BITMAP];
+
+    // TODO optimize: transactions almost never get IDs more than 32 bits can represent,
+    // but this database supports 64-bit transaction IDs,
+    // we can optimize this by using 32-bit transaction IDs
+    // and using 32-bit SIMD operations for visibility map calculations, when we check
+    // for having transaction ID above 32 bits representation capacity.
+    #[inline(always)]
+    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+        let mut map = [0; PAGE_SIZE_BITMAP];
+
+        let (xmax, tail1) = S::as_simd_u64s(&self.page.xmin);
+        let (xmin, tail2) = S::as_simd_u64s(&self.page.xmax);
+        const TAIL_ERR: &str = "Tail should be empty for SIMD operations";
+        debug_assert_eq!(0, tail1.len(), "{TAIL_ERR}");
+        debug_assert_eq!(0, tail2.len(), "{TAIL_ERR}");
+
+        let x_splat = simd.splat_u64s(self.x);
+
+        fn and<S: Simd>(simd: S, max: S::u64s, min: S::u64s, x_splat: S::u64s) -> S::m64s {
+            let mask_min = simd.greater_than_or_equal_u64s(max, x_splat);
+            let mask_max = simd.less_than_u64s(min, x_splat);
+            simd.and_m64s(mask_min, mask_max)
+        }
+
+        if S::U64_LANES == 8 {
+            for i in 0..PAGE_SIZE_BITMAP {
+                let and = and(simd, xmax[i], xmin[i], x_splat);
+
+                let elements: [u64; 8] = bytemuck::cast(and);
+                map[i] = ((elements[0] as u8) & (1 << 0))
+                    | ((elements[1] as u8) & (1 << 1))
+                    | ((elements[2] as u8) & (1 << 2))
+                    | ((elements[3] as u8) & (1 << 3))
+                    | ((elements[4] as u8) & (1 << 4))
+                    | ((elements[5] as u8) & (1 << 5))
+                    | ((elements[6] as u8) & (1 << 6))
+                    | ((elements[7] as u8) & (1 << 7));
+            }
+        } else if S::U64_LANES == 4 {
+            for i in 0..(PAGE_SIZE_BITMAP * 2) {
+                let a = and(simd, xmax[i], xmin[i], x_splat);
+                let b = and(simd, xmax[i + 1], xmin[i + 1], x_splat);
+
+                let a: [u64; 4] = bytemuck::cast(a);
+                let b: [u64; 4] = bytemuck::cast(b);
+                map[i / 2] = ((a[0] as u8) & (1 << 0))
+                    | ((a[1] as u8) & (1 << 1))
+                    | ((a[2] as u8) & (1 << 2))
+                    | ((a[3] as u8) & (1 << 3))
+                    | ((b[0] as u8) & (1 << 4))
+                    | ((b[1] as u8) & (1 << 5))
+                    | ((b[2] as u8) & (1 << 6))
+                    | ((b[3] as u8) & (1 << 7));
+            }
+        } else if S::U64_LANES == 2 {
+            for i in 0..(PAGE_SIZE_BITMAP * 4) {
+                let a = and(simd, xmax[i], xmin[i], x_splat);
+                let b = and(simd, xmax[i + 1], xmin[i + 1], x_splat);
+                let c = and(simd, xmax[i + 2], xmin[i + 2], x_splat);
+                let d = and(simd, xmax[i + 3], xmin[i + 3], x_splat);
+
+                let a: [u64; 2] = bytemuck::cast(a);
+                let b: [u64; 2] = bytemuck::cast(b);
+                let c: [u64; 2] = bytemuck::cast(c);
+                let d: [u64; 2] = bytemuck::cast(d);
+                map[i / 4] = ((a[0] as u8) & (1 << 0))
+                    | ((a[1] as u8) & (1 << 1))
+                    | ((b[0] as u8) & (1 << 2))
+                    | ((b[1] as u8) & (1 << 3))
+                    | ((c[0] as u8) & (1 << 4))
+                    | ((c[1] as u8) & (1 << 5))
+                    | ((d[0] as u8) & (1 << 6))
+                    | ((d[1] as u8) & (1 << 7));
+            }
+        } else {
+            let xmax = &self.page.xmax;
+            let xmin = &self.page.xmin;
+            // Fallback for when SIMD lanes are not supported
+            for i in 0..PAGE_SIZE_RECS {
+                let max = xmax[i];
+                let min = xmin[i];
+                let mask_min = max >= self.x;
+                let mask_max = min < self.x;
+
+                // Combine the masks into a single byte
+                map[i / 8] |= if mask_min && mask_max {
+                    1 << (i % 8)
+                } else {
+                    0
+                };
+            }
+        }
+
+        map
+    }
+}
+
 impl Page {
     /// Create a new empty page.
     pub const fn new() -> Self {
@@ -75,51 +179,11 @@ impl Page {
         }
     }
 
-    /// Check visibility of the record for the given transaction ID.
-    pub fn xmin_visibility_map(&self, x: u64) -> [u8; PAGE_SIZE_BITMAP] {
-        Self::visibility_map_inner(&self.xmin, x, false)
-    }
-
-    /// Check visibility of the record for the given transaction ID.
-    pub fn xmax_visibility_map(&self, x: u64) -> [u8; PAGE_SIZE_BITMAP] {
-        Self::visibility_map_inner(&self.xmax, x, true)
-    }
-
-    fn visibility_map_inner(
-        xmap: &[u64; PAGE_SIZE_RECS],
-        x: u64,
-        lt: bool,
-    ) -> [u8; PAGE_SIZE_BITMAP] {
-        let mut map = [0; PAGE_SIZE_BITMAP];
-        Arch::new().dispatch(|| {
-            for (i, el) in map.iter_mut().enumerate() {
-                let mut byte: u8 = 0;
-                for j in 0..8 {
-                    let val = xmap[i * 8 + j];
-                    byte |= if lt { (val > x) as u8 } else { (val < x) as u8 } << j;
-                }
-                *el = byte;
-            }
-        });
-
-        map
-    }
-
     /// Check `xmin` and `xmax` visibility maps for the given transaction ID.
     /// This combines the visibility maps for both `xmin` and `xmax` into a single map.
     /// This is useful for determining if a record is visible to the transaction.
     pub fn visibility_map(&self, x: u64) -> [u8; PAGE_SIZE_BITMAP] {
-        let xmax = self.xmax_visibility_map(x);
-        let xmin = self.xmin_visibility_map(x);
-        let mut map = [0u8; PAGE_SIZE_BITMAP];
-
-        // Combine the visibility maps for xmin and xmax
-        Arch::new().dispatch(|| {
-            for i in 0..PAGE_SIZE_BITMAP {
-                map[i] = xmax[i] & xmin[i];
-            }
-        });
-        map
+        Arch::new().dispatch(VisibilityMapCalc { page: self, x })
     }
 }
 
