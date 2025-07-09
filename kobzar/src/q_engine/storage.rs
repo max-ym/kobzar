@@ -62,8 +62,29 @@ pub mod layout;
 
 pub mod wal;
 
-/// Primary index file, which is used to store metadata about the records in the heap file.
+/// Heap primary index file, which is used to store metadata about the records in the heap file.
 pub mod pidx;
+
+/// Heap file, which is used to store the actual data records.
+/// The heap file can have variable-length records, which are stored in a compact binary format.
+pub mod heap;
+
+/// Schema of the database is stored in two files.
+/// First file is index file which maps schema versions to their offsets in the schema file.
+/// Second file is the schema file itself, which contains the actual schema data - the 
+/// information about the types and their fields.
+/// Heap primary index records reference the schema version of the record by the offset
+/// in the schema file. The separation is made so to allow for defragmentation of the schema file,
+/// since we only need to update the offset in the index file when the schema is defragmented.
+pub mod schema;
+
+/// Code is stored in separate raw-code files, which are referenced by the code primary index.
+/// Compiled code is stored in separate files that are compiled as dynamic libraries
+/// and can be loaded at runtime.
+/// 
+/// The raw code and compiled libraries are named after the index ID of the code record,
+/// which allows for efficient lookup and loading of the code.
+pub mod code;
 
 type Id = u64;
 

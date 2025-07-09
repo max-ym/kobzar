@@ -48,7 +48,7 @@ pub struct Page {
     pub prev: [u64; PAGE_SIZE_RECS],
 
     /// Schema version of the record.
-    pub schema_version: [u32; PAGE_SIZE_RECS],
+    pub schema_version: [schema::Version; PAGE_SIZE_RECS],
 }
 
 impl Default for Page {
