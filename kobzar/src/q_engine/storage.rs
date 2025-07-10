@@ -101,13 +101,31 @@ type Id = u64;
 
 /// Database storage engine.
 pub struct DbStore {
-    // TODO
+    tys: HashMap<TypeId, schema::EngineTypeSchema>,
+    pidx: pidx::PageStore,
 }
 
 impl DbStore {
     pub fn open(_path: PathBuf) -> std::io::Result<Self> {
-        Ok(DbStore {
-            // TODO
-        })
+        todo!()
     }
+}
+
+/// Change operation issued on the heap record. This allows to selectively modify parts
+/// of the record, copying other parts as is to form a new record version entry.
+#[derive(Debug)]
+pub enum ChangeOp<'data> {
+    Field {
+        /// Index of the field to change.
+        idx: u32,
+
+        /// New value for the field.
+        value: &'data [u8],
+
+        /// Sub-byte part of the field to change.
+        bits: u8,
+
+        /// Number of bits in the sub-byte part.
+        bits_cnt: u8,
+    },
 }

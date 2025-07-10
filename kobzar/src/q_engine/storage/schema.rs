@@ -172,6 +172,64 @@ pub struct FieldCount {
     pub field_count: u16,
 }
 
+/// ADT variant information for the engine.
+#[derive(Debug)]
+pub struct EngineAdtVariant {
+    /// The name of the ADT variant.
+    pub name: String,
+
+    /// The comment about the ADT variant.
+    pub comment: Option<String>,
+
+    /// The fields of the ADT variant.
+    pub fields: Vec<EngineField>,
+}
+
+/// The complete type schema, built from the schema file to use in the engine.
+#[derive(Debug)]
+pub struct EngineTypeSchema {
+    /// The name of the type.
+    pub name: String,
+
+    /// The comment about the type.
+    pub comment: Option<String>,
+
+    /// Kind of the schema.
+    pub kind: EngineSchemaKind,
+}
+
+#[derive(Debug)]
+pub enum EngineSchemaKind {
+    /// Schemaful table.
+    Schemaful(Vec<EngineField>),
+
+    /// Schemaless table.
+    Schemaless,
+
+    /// ADT type.
+    Adt(Vec<EngineAdtVariant>),
+}
+
+#[derive(Debug)]
+pub struct EngineField {
+    /// The name of the field.
+    pub name: String,
+
+    /// Comment about the field.
+    pub comment: Option<String>,
+
+    /// The type ID of the field.
+    pub type_id: TypeId,
+
+    pub validation: Option<code::Id>,
+    pub trigger_before_insert: Option<code::Id>,
+    pub trigger_after_insert: Option<code::Id>,
+    pub trigger_before_update: Option<code::Id>,
+    pub trigger_after_update: Option<code::Id>,
+    pub trigger_before_delete: Option<code::Id>,
+    pub trigger_after_delete: Option<code::Id>,
+}
+
 #[derive(Debug)]
 pub struct File {
     file: tokio::fs::File,
