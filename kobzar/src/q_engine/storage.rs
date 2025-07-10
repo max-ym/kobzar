@@ -67,6 +67,17 @@ pub mod pidx;
 
 /// Heap file, which is used to store the actual data records.
 /// The heap file can have variable-length records, which are stored in a compact binary format.
+/// 
+/// Heap is split by table data and BLOB data.
+/// The tables are organized into tablespace files, which are used to store the data
+/// for each table in the database in the same file. This heap file has associated BLOB file. 
+/// BLOB file is used to store large binary objects (BLOBs) per tablespace.
+/// BLOBs are stored in a separate heap file to allow more compact storage of the main heap file,
+/// improving read performance.
+/// 
+/// Tablespace can have only one table, effectively making it a normal table file. For small
+/// databases, tablespace can be used to store all tables in the same file, which allows for
+/// less file system overhead and potentially better performance and maintainability.
 pub mod heap;
 
 /// Schema of the database is stored in two files.

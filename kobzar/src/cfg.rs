@@ -121,6 +121,11 @@ pub struct ConfigFile {
     /// The log won't be split into smaller fragments than this size.
     pub wal_frag_min_bytes: u64,
 
+    /// Target number of entries in the Write-Ahead Log (WAL) fragment.
+    /// This is used to determine when to split the WAL fragment into a new one.
+    /// If not set, the default value is 1024.
+    pub wal_target_entries: u64,
+
     /// Number of records in the primary index cache.
     pub primary_index_cache_recs: u64,
 }
@@ -241,6 +246,7 @@ impl Default for ConfigFile {
             io_device: vec![DeviceConfig::default()],
             wal_frag_soft_max_bytes: 1024 * 1024 * 10, // 10 MB
             wal_frag_min_bytes: 1024 * 1024,           // 1 MB
+            wal_target_entries: 1024,
             primary_index_cache_recs: 128,
         }
     }
