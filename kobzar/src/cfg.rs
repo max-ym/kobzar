@@ -128,6 +128,9 @@ pub struct ConfigFile {
 
     /// Number of records in the primary index cache.
     pub primary_index_cache_recs: u64,
+
+    /// Number of records in the heap index cache.
+    pub heap_index_cache_recs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -248,6 +251,7 @@ impl Default for ConfigFile {
             wal_frag_min_bytes: 1024 * 1024,           // 1 MB
             wal_target_entries: 1024,
             primary_index_cache_recs: 128,
+            heap_index_cache_recs: 128,
         }
     }
 }

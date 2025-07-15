@@ -56,8 +56,11 @@
 
 use super::*;
 
-use smallvec::smallvec;
+use smallvec::{SmallVec, smallvec};
+use std::io::SeekFrom;
 use std::path::PathBuf;
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 pub mod layout;
 
@@ -98,12 +101,46 @@ pub mod schema;
 /// which allows for efficient lookup and loading of the code.
 pub mod code;
 
+/// B-tree index implementation for the database data indexing.
+/// B-tree index is used to store the data in a sorted order, which allows for efficient
+/// search and retrieval of the data. B-tree index is implemented as a separate file,
+/// which is used to store the index data. B-tree index can be used to index any
+/// data type, and can be used to index multiple fields of the same data type.
+pub mod idx_btree;
+
+/// Index page size in bytes.
+/// This is the size of the page used to store the index of heap data.
+/// This size is common for all index implementations, and is used to
+/// store the index data in a compact format.
+pub const INDEX_PAGE_SIZE: usize = 4096;
+
+#[repr(align(64))]
+pub struct IdxPage([u8; INDEX_PAGE_SIZE]);
+
 type Id = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IndexKey {
+    /// Index identifier.
+    pub index: Id,
+
+    /// Database identifier.
+    pub db: Id,
+
+    /// Page identifier.
+    pub page: u64,
+}
 
 /// Database storage engine.
 pub struct DbStore {
     tys: HashMap<TypeId, schema::EngineTypeSchema>,
     pidx: pidx::PageStore,
+
+    // TODO: this should be replaced with pidx::PageStore except that it in turn
+    // should be reimplemented to be more generic and to be reusable among different index types.
+    // PIDX and other indexes work differently and are tracked separately, but yet share
+    // the general caching logic.
+    index_pages: HashMap<IndexKey, IdxPage>,
 }
 
 impl DbStore {

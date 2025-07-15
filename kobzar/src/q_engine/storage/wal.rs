@@ -3,10 +3,7 @@ use super::*;
 use blake2::Digest;
 use blake2::digest::consts::U32;
 use blake2::digest::generic_array::GenericArray;
-use std::io::SeekFrom;
-use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 
 /// Write-ahead log (WAL) for the database.
 /// It is used to store changes to the database before they are written to the storage.

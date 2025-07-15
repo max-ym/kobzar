@@ -1,10 +1,3 @@
-use std::io::SeekFrom;
-
-use tokio::{
-    fs,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter},
-};
-
 use super::*;
 
 /// Heap file offset is smaller, as it is also used in Primary Index File
@@ -188,7 +181,10 @@ impl<'file> HeapWrite<'file> {
 
     /// Get current position in the file.
     pub async fn position(&mut self) -> std::io::Result<HeapFileOffset> {
-        self.file.stream_position().await.map(|pos| pos as HeapFileOffset)
+        self.file
+            .stream_position()
+            .await
+            .map(|pos| pos as HeapFileOffset)
     }
 
     pub async fn move_to(&mut self, offset: HeapFileOffset) -> std::io::Result<()> {
@@ -198,7 +194,7 @@ impl<'file> HeapWrite<'file> {
     }
 
     /// Write the bitmap of the given size in bytes.
-    /// 
+    ///
     /// # Safety
     /// This function does not ensure current position is valid to write a bitmap.
     pub async unsafe fn write_bitmap(&mut self, bitmap: &[u8]) -> std::io::Result<()> {
@@ -207,7 +203,7 @@ impl<'file> HeapWrite<'file> {
     }
 
     /// Write the ADT variant at the current position, advancing the cursor.
-    /// 
+    ///
     /// # Safety
     /// This function does not ensure current position is valid to write an ADT variant.
     pub async unsafe fn write_adt_variant(&mut self, variant: u32) -> std::io::Result<()> {
@@ -216,7 +212,7 @@ impl<'file> HeapWrite<'file> {
     }
 
     /// Write the BLOB storable record at the current position, advancing the cursor.
-    /// 
+    ///
     /// # Safety
     /// This function does not ensure current position is valid to write a BLOB storable record.
     pub async unsafe fn write_blob_storable(&mut self, blob: BlobStorable) -> std::io::Result<()> {

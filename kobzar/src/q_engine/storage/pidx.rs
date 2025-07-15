@@ -2,7 +2,6 @@ use std::ops::DerefMut;
 
 use pulp::{Arch, Simd, WithSimd, bytemuck};
 use tokio::fs::OpenOptions;
-use tokio::io::AsyncReadExt;
 
 use super::*;
 
@@ -19,6 +18,9 @@ pub const PAGE_SIZE_BITMAP: usize = PAGE_SIZE_RECS / 8;
 /// This allows us to keep frequently accessed pages in the cache longer, while evicting
 /// less frequently accessed pages.
 pub const LAST_ACCESSED_GENS: usize = 4;
+
+/// Item number in the primary index file.
+pub type ItemId = u64;
 
 /// Page of primary index records.
 /// Page is a fixed-size structure that contains metadata about the records in the heap file.
@@ -226,7 +228,7 @@ pub struct Key {
     pub type_id: u64,
 
     /// Primary index item number.
-    pub item: u64,
+    pub item: ItemId,
 
     /// Database ID.
     pub db: u64,

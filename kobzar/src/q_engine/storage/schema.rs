@@ -1,7 +1,5 @@
 use std::mem::transmute;
 
-use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
-
 use super::*;
 
 /// Offset in the file, used to reference items in the schema file.
