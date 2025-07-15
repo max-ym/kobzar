@@ -57,6 +57,7 @@
 use super::*;
 
 use smallvec::{SmallVec, smallvec};
+use std::borrow::Cow;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use tokio::fs;
@@ -101,6 +102,9 @@ pub mod schema;
 /// which allows for efficient lookup and loading of the code.
 pub mod code;
 
+/// Common code for indexes.
+pub mod idx_common;
+
 /// B-tree index implementation for the database data indexing.
 /// B-tree index is used to store the data in a sorted order, which allows for efficient
 /// search and retrieval of the data. B-tree index is implemented as a separate file,
@@ -120,7 +124,7 @@ pub struct IdxPage([u8; INDEX_PAGE_SIZE]);
 type Id = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IndexKey {
+pub struct IdxKey {
     /// Index identifier.
     pub index: Id,
 
@@ -131,16 +135,23 @@ pub struct IndexKey {
     pub page: u64,
 }
 
+impl idx_common::KeyExt for IdxKey {
+    type PageBoundKey = Self;
+
+    fn page_bound(&self) -> Self::PageBoundKey {
+        *self
+    }
+
+    fn filename(&self) -> Cow<'static, str> {
+        format!("{:x}.idx", self.index).into()
+    }
+}
+
 /// Database storage engine.
 pub struct DbStore {
     tys: HashMap<TypeId, schema::EngineTypeSchema>,
     pidx: pidx::PageStore,
-
-    // TODO: this should be replaced with pidx::PageStore except that it in turn
-    // should be reimplemented to be more generic and to be reusable among different index types.
-    // PIDX and other indexes work differently and are tracked separately, but yet share
-    // the general caching logic.
-    index_pages: HashMap<IndexKey, IdxPage>,
+    heap_idx: idx_common::PageStore<IdxKey, IdxPage, { size_of::<IdxPage>() }>,
 }
 
 impl DbStore {
