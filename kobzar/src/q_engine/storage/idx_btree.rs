@@ -25,6 +25,17 @@ pub struct Node {
     children: [ChildFileOffset; BRANCH_FANOUT],
 }
 
+impl Node {
+    /// Convert a mutable reference to a [Node] from a mutable reference to a generic [IdxPage].
+    ///
+    /// # Safety
+    /// This function is unsafe because it assumes that the provided [IdxPage] represents
+    /// a valid [Node] structure.
+    pub unsafe fn from_raw(page: &mut IdxPage) -> &mut Self {
+        unsafe { &mut *(page.0.as_mut_ptr() as *mut Self) }
+    }
+}
+
 /// File offset used to reference items in the B-tree index, that can
 /// indicate absent values.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +111,17 @@ pub struct Leaf {
 
     /// Primary index item numbers for the keys.
     pidx: [pidx::ItemId; BRANCH_FANOUT],
+}
+
+impl Leaf {
+    /// Convert a mutable reference to a [Leaf] from a mutable reference to a generic [IdxPage].
+    ///
+    /// # Safety
+    /// This function is unsafe because it assumes that the provided [IdxPage] represents
+    /// a valid [Leaf] structure.
+    pub unsafe fn from_raw(page: &mut IdxPage) -> &mut Self {
+        unsafe { &mut *(page.0.as_mut_ptr() as *mut Self) }
+    }
 }
 
 /// File handle for the index.

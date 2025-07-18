@@ -132,7 +132,7 @@ pub struct IdxKey {
     pub db: Id,
 
     /// Page identifier.
-    pub page: u64,
+    pub page: Id,
 }
 
 impl idx_common::KeyExt for IdxKey {
