@@ -2,7 +2,7 @@ use std::cmp;
 
 use super::*;
 
-pub type FileOffset = u64;
+pub type FilePageOffset = u64;
 
 /// Branch fanout for the B-tree index.
 /// This is selected so that [Node] and [Leaf] structures fit into a single page
@@ -16,7 +16,7 @@ pub struct Node {
     keys: Keys,
 
     /// Parent node in the B-tree index.
-    parent: FileOffset,
+    parent: FilePageOffset,
 
     /// Key count in the node.
     keys_count: u64,
@@ -24,7 +24,7 @@ pub struct Node {
     /// Children of the node.
     /// This is a fixed-size array of children, which allows for efficient traversal
     /// of the B-tree index.
-    children: [ChildFileOffset; BRANCH_FANOUT],
+    children: [ChildFilePageOffset; BRANCH_FANOUT],
 }
 
 impl Node {
@@ -42,16 +42,16 @@ impl Node {
 /// indicate absent values.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-struct OptionFileOffset(FileOffset);
+struct OptionFileOffset(FilePageOffset);
 
 impl OptionFileOffset {
-    pub const NONE: Self = Self(FileOffset::MAX);
+    pub const NONE: Self = Self(FilePageOffset::MAX);
 
     pub const fn is_some(self) -> bool {
         self.0 != Self::NONE.0
     }
 
-    pub const fn get(self) -> Option<FileOffset> {
+    pub const fn get(self) -> Option<FilePageOffset> {
         if self.is_some() { Some(self.0) } else { None }
     }
 }
@@ -59,9 +59,9 @@ impl OptionFileOffset {
 /// Child file offset is used to reference child nodes in the B-tree index.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-struct ChildFileOffset(FileOffset);
+struct ChildFilePageOffset(FilePageOffset);
 
-impl ChildFileOffset {
+impl ChildFilePageOffset {
     /// If this bit is set, the child is a leaf node. Otherwise, it is a branch node.
     pub const LEAF_FLAG: u64 = 1 << 63;
 
@@ -71,7 +71,7 @@ impl ChildFileOffset {
     }
 
     /// Returns the file offset of the child node.
-    pub const fn into_inner(self) -> FileOffset {
+    pub const fn into_inner(self) -> FilePageOffset {
         self.0 & !Self::LEAF_FLAG
     }
 }
@@ -106,7 +106,7 @@ pub struct Leaf {
     /// Number of keys in the leaf entry.
     key_count: u64,
 
-    parent: FileOffset,
+    parent: FilePageOffset,
 
     /// Keys in the leaf entry.
     keys: Keys,
@@ -137,7 +137,7 @@ pub struct File {
 #[derive(Debug)]
 pub struct Write {
     file: BufWriter<tokio::fs::File>,
-    offset: FileOffset,
+    offset: FilePageOffset,
 }
 
 impl Write {
@@ -155,14 +155,36 @@ impl Write {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SearchOutcome {
+    /// The first page ID where the key was matched.
     pub start_page: Id,
-    pub start_key_id: u64,
+
+    /// The last page ID where the key was matched.
     pub end_page: Id,
+
+    /// The key ID in the start page where the match was found.
+    pub start_key_id: u64,
+
+    /// The last key ID in the last page that still matches the search value.
     pub end_key_id: u64,
-    pub search_preload_id: PreloadId,
+}
+
+impl SearchOutcome {
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            start_page: self.start_page.min(other.start_page),
+            end_page: self.end_page.max(other.end_page),
+            start_key_id: self.start_key_id.min(other.start_key_id),
+            end_key_id: self.end_key_id.max(other.end_key_id),
+        }
+    }
+
+    pub fn key_len(&self) -> u64 {
+        (self.start_key_id..self.end_key_id).count() as u64
+    }
 }
 
 /// Search configuration for the B-tree index.
+#[derive(Debug, Clone, Copy)]
 pub struct SearchCfg<'data> {
     /// Value to search for in the B-tree index.
     pub value: &'data [u8],
@@ -175,6 +197,9 @@ pub struct SearchCfg<'data> {
 
     /// Whether the index is storing BLOBs or inline data.
     pub is_blobs: bool,
+
+    /// Maximum number of results to return.
+    pub limit: u64,
 }
 
 impl DbStore {
@@ -185,16 +210,11 @@ impl DbStore {
     ///
     /// This function relies on the validity of the page passed as `root` argument to
     /// actually be a valid B-tree root node with indicated type.
-    pub async unsafe fn btree_search(&mut self, cfg: SearchCfg<'_>) -> io::Result<SearchOutcome> {
-        // TODO: how do we handle multi-key B-trees?
-
-        let mut current_page = self.load_idx(cfg.root).await?.clone();
-        let mut current_key_id = 0;
-        let mut start_page = cfg.root.page;
-        let mut end_page = cfg.root.page;
-        let mut start_key_id = 0;
-        let mut end_key_id = 0;
-
+    pub async unsafe fn btree_search(
+        &mut self,
+        cfg: SearchCfg<'_>,
+    ) -> io::Result<Option<SearchOutcome>> {
+        #[derive(Clone)]
         struct CmpValues<'data> {
             // Value being compared.
             val: &'data [u8],
@@ -205,7 +225,13 @@ impl DbStore {
                 Self { val }
             }
 
+            /// Compare the value with the given chunk of data. If the chunk is shorter than
+            /// the value, we can only compare up to the length of the chunk.
+            /// If the chunk is longer than the value, we can only compare up to the length of
+            /// the value. Since our inline keys have fixed size, this allows to correctly compare
+            /// data types that are shorter than the inline key size.
             fn cmp(&mut self, chunk: &[u8]) -> Option<cmp::Ordering> {
+                let chunk = &chunk[0..self.val.len()];
                 let result = self.val.cmp(chunk);
                 if result != cmp::Ordering::Equal {
                     // We found a difference, return it.
@@ -224,14 +250,110 @@ impl DbStore {
             }
         }
 
-        loop {
-            let keys = if cfg.is_root_leaf {
-                unsafe { Leaf::from_raw(&current_page).keys }
+        fn keys<'page>(cfg: SearchCfg<'_>, current_page: &'page IdxPage) -> &'page [Key] {
+            if cfg.is_root_leaf {
+                let leaf = unsafe { Leaf::from_raw(current_page) };
+                &leaf.keys.0[0..leaf.key_count as usize]
             } else {
-                unsafe { Node::from_raw(&current_page).keys }
-            };
+                let node = unsafe { Node::from_raw(current_page) };
+                &node.keys.0[0..node.keys_count as usize]
+            }
+        }
 
+        async fn search_blob(
+            this: &mut DbStore,
+            cfg: SearchCfg<'_>,
+        ) -> io::Result<Option<SearchOutcome>> {
             todo!()
+        }
+
+        async fn search_inline(
+            this: &mut DbStore,
+            cfg: SearchCfg<'_>,
+        ) -> io::Result<Option<SearchOutcome>> {
+            let value: [u8; 16] = {
+                let mut buf = [0u8; 16];
+                buf[0..cfg.value.len()].copy_from_slice(cfg.value);
+                buf
+            };
+            let cur = this.load_idx(cfg.root).await?.clone();
+            let keys = keys(cfg, &cur);
+
+            let found = keys
+                .binary_search_by(|key| {
+                    let key = unsafe { &key.inline };
+                    key.cmp(&value)
+                })
+                .ok();
+            let Some(found) = found else {
+                // If the key was not found, return None.
+                return Ok(None);
+            };
+            let mut start_key_id = found as u64;
+            let mut end_key_id = found as u64;
+
+            // Check left and right neighbors, adjust start_key_id and end_key_id accordingly.
+            while unsafe { keys[start_key_id as usize].inline } == value {
+                if start_key_id > 0 {
+                    start_key_id -= 1;
+                } else {
+                    break;
+                }
+            }
+            while unsafe { keys[end_key_id as usize].inline } == value {
+                if end_key_id < keys.len() as u64 - 1 {
+                    end_key_id += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // If we are at the leaf node, we can return the result.
+            let outcome = SearchOutcome {
+                start_page: cfg.root.page,
+                end_page: cfg.root.page,
+                start_key_id,
+                end_key_id,
+            };
+            if cfg.is_root_leaf {
+                return Ok(Some(outcome));
+            }
+
+            // If we are not at the leaf node, we need to traverse the tree.
+            let node = unsafe { Node::from_raw(&cur) };
+            let mut merged = outcome;
+            let mut results = merged.key_len();
+            let mut cur = start_key_id;
+            while cur < end_key_id && results < cfg.limit {
+                let child = node.children[cur as usize];
+                let future = search_inline(this, SearchCfg {
+                    value: cfg.value,
+                    root: IdxKey {
+                        page: child.into_inner(),
+                        ..cfg.root
+                    },
+                    is_root_leaf: child.is_leaf(),
+                    is_blobs: cfg.is_blobs,
+                    limit: cfg.limit - results,
+                });
+
+                let Some(result) = Box::pin(future).await? else {
+                    // This should not happen, because we already found the key.
+                    panic!("Expected to find Some result, but got None");
+                };
+
+                results += result.key_len();
+                merged = merged.merge(&result);
+                cur += 1;
+            }
+
+            Ok(Some(merged))
+        }
+
+        if cfg.is_blobs {
+            search_blob(self, cfg).await
+        } else {
+            search_inline(self, cfg).await
         }
     }
 }

@@ -9,18 +9,44 @@ pub type HeapFileOffset = u32;
 #[repr(C)]
 pub struct BlobStorable {
     /// BLOB offset determines where the BLOB data starts in the BLOB file.
-    /// If this is set to [u64::MAX], it means that the BLOB is not stored in the BLOB file,
-    /// but is stored inline in the record itself.
-    pub blob_offset: u64,
+    /// It also stores flags in the high bits.
+    blob_offset: u64,
 
     /// The size of the BLOB data in bytes.
-    pub blob_size: u64,
+    blob_size: u64,
 }
 
 impl BlobStorable {
+    /// When this flag is set, BLOB data is copied into the index BLOB space, and is not
+    /// stored in the heap BLOB file nor heap inline BLOB entries.
+    pub const FLAG_INDEX_BLOB: u64 = 1 << 63;
+
+    /// When this flag is set, the BLOB is stored inline in the heap file record.
+    pub const FLAG_RECORD_INLINE: u64 = 1 << 62;
+
     /// Returns true if the BLOB is stored inline in the target data record (not the index record).
-    pub fn is_inline(&self) -> bool {
-        self.blob_offset == u64::MAX
+    pub const fn is_inline(&self) -> bool {
+        self.blob_offset & Self::FLAG_RECORD_INLINE != 0
+    }
+
+    pub const fn inline_offset(&self) -> Option<u64> {
+        if self.is_inline() {
+            Some(self.blob_offset & !Self::FLAG_RECORD_INLINE)
+        } else {
+            None
+        }
+    }
+
+    pub const fn is_index_blob(&self) -> bool {
+        self.blob_offset & Self::FLAG_INDEX_BLOB != 0
+    }
+
+    pub const fn index_blob_offset(&self) -> Option<u64> {
+        if self.is_index_blob() {
+            Some(self.blob_offset & !Self::FLAG_INDEX_BLOB)
+        } else {
+            None
+        }
     }
 }
 

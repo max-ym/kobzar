@@ -179,7 +179,7 @@ impl DbStore {
     pub fn load_idx_blob(
         &mut self,
         key: IdxKey,
-        blob_offset: idx_btree::FileOffset,
+        blob_offset: idx_btree::FilePageOffset,
         buf: &mut [u8],
     ) -> io::Result<()> {
         todo!()
