@@ -18,7 +18,7 @@ pub struct BlobStorable {
 }
 
 impl BlobStorable {
-    /// Returns true if the BLOB is stored inline in the record.
+    /// Returns true if the BLOB is stored inline in the target data record (not the index record).
     pub fn is_inline(&self) -> bool {
         self.blob_offset == u64::MAX
     }

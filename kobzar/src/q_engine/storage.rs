@@ -60,8 +60,8 @@ use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::io::SeekFrom;
 use std::path::PathBuf;
-use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::{fs, io};
 
 pub mod layout;
 
@@ -118,6 +118,7 @@ pub mod idx_btree;
 /// store the index data in a compact format.
 pub const INDEX_PAGE_SIZE: usize = 4096;
 
+#[derive(Clone)]
 #[repr(align(64))]
 pub struct IdxPage([u8; INDEX_PAGE_SIZE]);
 
@@ -133,6 +134,20 @@ pub struct IdxKey {
 
     /// Page identifier.
     pub page: Id,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HeapRecordInlineBlobId {
+    /// Database identifier.
+    pub db: Id,
+
+    /// ID of the data type, used to identify files that store the data.
+    pub datatype: Id,
+
+    /// Inline BLOB offset in the heap file to find the BLOB data required for the operation.
+    /// This points exactly to the BLOB data of a record, omitting need for schema lookup or
+    /// primary index lookup.
+    pub offset: u64,
 }
 
 impl idx_common::KeyExt for IdxKey {
@@ -155,7 +170,36 @@ pub struct DbStore {
 }
 
 impl DbStore {
-    pub fn open(_path: PathBuf) -> std::io::Result<Self> {
+    pub fn open(_path: PathBuf) -> io::Result<Self> {
+        todo!()
+    }
+
+    /// Load index BLOB data for the given index key and BLOB file offset. The amount of data read
+    /// is determined by the size of the buffer passed.
+    pub fn load_idx_blob(
+        &mut self,
+        key: IdxKey,
+        blob_offset: idx_btree::FileOffset,
+        buf: &mut [u8],
+    ) -> io::Result<()> {
+        todo!()
+    }
+
+    /// Load inline BLOB data into the buffer from the heap file.
+    /// This is used to load BLOB data that is stored inline in the record itself.
+    /// The amount of data read is determined by the size of the buffer passed.
+    pub fn load_inline_blob(
+        &mut self,
+        rec: HeapRecordInlineBlobId,
+        buf: &mut [u8],
+    ) -> io::Result<()> {
+        todo!()
+    }
+
+    /// Load the index page for the given key.
+    /// If it is already loaded, it is returned immediately from the cache.
+    /// If the operation was enqueued, it will be removed from the queue.
+    pub async fn load_idx(&mut self, key: IdxKey) -> io::Result<&IdxPage> {
         todo!()
     }
 }
